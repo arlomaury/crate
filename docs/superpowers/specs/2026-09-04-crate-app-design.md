@@ -159,9 +159,21 @@ This is the heart of the app.
      virtual, so genuine multi-crate membership costs nothing and is often
      right: a track can legitimately be both House and Party.
 
-   One click, defaulting to move, and recorded either way. Only a *move* counts
-   as the model getting it wrong; an also-add is additional truth rather than a
-   contradiction. Both feed the centroids.
+   **A move is always recorded as a failure** — the track left the crate the
+   model chose, so the model was wrong, full stop. No prompt, no ambiguity.
+
+   **An also-add asks whether it was a failure**, because it genuinely can be
+   either:
+
+   - *"Right, and it belongs here too"* — the model's crate was correct and this
+     is a second home. Not a failure. The common case, so it is the default.
+   - *"Wrong, but leave it there anyway"* — the model's crate was a miss the DJ
+     is tolerating rather than endorsing. Counted as a failure.
+
+   This is a single toggle in the same click, not a second dialogue. It matters
+   because without it every lenient also-add would silently inflate the measured
+   accuracy - the model would look better precisely when the DJ was being
+   forgiving. Centroids are fed either way; only the scoring differs.
 
 5. The assignment is stored as ground truth and the affected crates' centroids
    are recomputed to include it.
@@ -269,8 +281,11 @@ crates       (id, name, created_at, is_gap_genre)
 assignments  (track_id, crate_id, source: 'auto'|'human', confidence, created_at)
              -- several rows per track = genuine multi-crate membership,
              --   which is what "also add" produces
-corrections  (track_id, from_crate, to_crate, created_at)   -- audit trail;
-             --   from_crate NULL for an also-add (nothing was wrong)
+corrections  (track_id, from_crate, to_crate, was_error, created_at)
+             -- audit trail. from_crate NULL for an also-add.
+             -- was_error: always 1 for a move; for an also-add it is the
+             --   DJ's own call, so accuracy is never inflated by a
+             --   tolerated miss being logged as a success.
 config       (key, value)                      -- watched folders, thresholds
 ```
 
