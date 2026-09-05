@@ -1,5 +1,6 @@
 """Runs analyze.py over pending tracks and caches everything it produces."""
 import json
+import tempfile
 from datetime import datetime, timezone
 
 import numpy as np
@@ -34,22 +35,29 @@ def store_result(con, track_id, result, embedding):
 def load_embedding(con, track_id):
     row = con.execute("SELECT vector FROM embeddings WHERE track_id=?",
                       (track_id,)).fetchone()
-    return None if row is None else np.frombuffer(row["vector"], dtype=np.float32)
+    if row is None:
+        return None
+    # .copy() so callers (e.g. the classifier normalising in place) don't hit
+    # a read-only-array error: np.frombuffer over bytes is not writeable.
+    return np.frombuffer(row["vector"], dtype=np.float32).copy()
 
 
 def analyse_one(con, gm, row):
-    """Analyse a single track row. Returns True if it produced usable output."""
-    try:
-        result = analyze.analyse(row["path"], gm, verbose=False)
-    except Exception as e:
-        store_result(con, row["id"], {"errors": [str(e)]}, None)
-        return False
-    emb = None
-    try:
-        a16 = analyze.es.MonoLoader(filename=row["path"], sampleRate=16000,
-                                    resampleQuality=4)()
-        emb = gm.embed(a16).mean(axis=0) if gm and gm.ok else None
-    except Exception:
-        pass
+    """Analyse a single track row. Returns True if it produced usable output.
+
+    Reads back the embedding analyze.analyse() already wrote to `emb_dir`
+    instead of decoding the audio and running the model a second time -
+    that forward pass is the single most expensive step in the pipeline.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        try:
+            result = analyze.analyse(row["path"], gm, verbose=False, emb_dir=tmp)
+        except Exception as e:
+            store_result(con, row["id"], {"errors": [str(e)]}, None)
+            return False
+        emb = None
+        f = analyze.embedding_path(tmp, row["path"])
+        if f.exists():
+            emb = np.load(f)
     store_result(con, row["id"], result, emb)
     return not result.get("errors")

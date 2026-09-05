@@ -1,7 +1,8 @@
 import json
 import numpy as np
+import analyze
 from crateapp.db import connect
-from crateapp.worker import store_result, load_embedding
+from crateapp.worker import store_result, load_embedding, analyse_one
 
 
 def a_track(con, path="/music/a.wav"):
@@ -68,3 +69,71 @@ def test_a_failed_track_records_its_error_and_is_not_retried(tmp_path):
     row = con.execute("SELECT * FROM tracks WHERE id=?", (tid,)).fetchone()
     assert row["error"] == "could not decode"
     assert row["analysed_at"] is not None      # so pending() will not return it
+
+
+def test_load_embedding_returns_a_writeable_array(tmp_path):
+    """The classifier normalises vectors in place; a read-only view (what
+    np.frombuffer gives by default) would blow up on that."""
+    con = connect(tmp_path / "l.db")
+    tid = a_track(con)
+    store_result(con, tid, RESULT, np.ones(1280, dtype=np.float32))
+    vec = load_embedding(con, tid)
+    assert vec.flags.writeable
+    vec[0] = 42.0  # would raise ValueError if read-only
+
+
+def test_analyse_one_stores_result_and_embedding_on_success(tmp_path, monkeypatch):
+    def fake_analyse(path, gm, verbose=False, emb_dir=None):
+        if emb_dir is not None:
+            np.save(analyze.embedding_path(emb_dir, path),
+                    np.full(1280, 7.0, dtype=np.float32))
+        return dict(RESULT)
+
+    monkeypatch.setattr(analyze, "analyse", fake_analyse)
+    con = connect(tmp_path / "l.db")
+    tid = a_track(con)
+    row = con.execute("SELECT * FROM tracks WHERE id=?", (tid,)).fetchone()
+
+    ok = analyse_one(con, gm=object(), row=row)
+
+    assert ok is True
+    track = con.execute("SELECT * FROM tracks WHERE id=?", (tid,)).fetchone()
+    assert track["bpm"] == 128.0 and track["analysed_at"] is not None
+    emb = load_embedding(con, tid)
+    assert emb is not None and emb[0] == 7.0
+
+
+def test_analyse_one_marks_analysed_and_returns_false_when_analyse_raises(
+        tmp_path, monkeypatch):
+    def fake_analyse(path, gm, verbose=False, emb_dir=None):
+        raise RuntimeError("could not decode")
+
+    monkeypatch.setattr(analyze, "analyse", fake_analyse)
+    con = connect(tmp_path / "l.db")
+    tid = a_track(con)
+    row = con.execute("SELECT * FROM tracks WHERE id=?", (tid,)).fetchone()
+
+    ok = analyse_one(con, gm=object(), row=row)
+
+    assert ok is False
+    track = con.execute("SELECT * FROM tracks WHERE id=?", (tid,)).fetchone()
+    assert track["analysed_at"] is not None    # so pending() won't retry it forever
+    assert track["error"] == "could not decode"
+
+
+def test_analyse_one_returns_false_but_still_records_a_result_level_error(
+        tmp_path, monkeypatch):
+    def fake_analyse(path, gm, verbose=False, emb_dir=None):
+        return {"errors": ["file shorter than 5s, skipped"]}
+
+    monkeypatch.setattr(analyze, "analyse", fake_analyse)
+    con = connect(tmp_path / "l.db")
+    tid = a_track(con)
+    row = con.execute("SELECT * FROM tracks WHERE id=?", (tid,)).fetchone()
+
+    ok = analyse_one(con, gm=object(), row=row)
+
+    assert ok is False
+    track = con.execute("SELECT * FROM tracks WHERE id=?", (tid,)).fetchone()
+    assert track["analysed_at"] is not None
+    assert track["error"] == "file shorter than 5s, skipped"
