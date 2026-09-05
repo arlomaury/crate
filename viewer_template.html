@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Crate</title>
+<style>
+  :root{
+    /* Frequency-band colours, matching how a CDJ screen encodes a waveform:
+       low end warm, mids amber, top end cold. Colour carries meaning here. */
+    --low:#f2643c; --mid:#e0b83e; --high:#4ea8de; --vox:#a97fd6;
+    --bg:#0c0e13; --panel:#141822; --panel2:#1b202c; --line:#252b39;
+    --ink:#e9ecf1; --dim:#828da0; --faint:#5a6474;
+    --ok:#4bbf8a; --warn:#e0b83e;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    background:var(--bg); color:var(--ink);
+    font:15px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",sans-serif;
+    font-feature-settings:"tnum" 1;
+    display:flex; flex-direction:column; overflow:hidden;
+  }
+  .num{font-variant-numeric:tabular-nums}
+
+  header{
+    display:flex; align-items:center; gap:20px; flex-wrap:wrap;
+    padding:14px 20px; border-bottom:1px solid var(--line); background:var(--panel);
+  }
+  header h1{font-size:17px; font-weight:640; letter-spacing:-.01em}
+  .counts{color:var(--dim); font-size:13.5px}
+  .counts b{color:var(--ink); font-weight:600}
+  .spacer{flex:1}
+  input[type=search],select{
+    background:var(--panel2); border:1px solid var(--line); color:var(--ink);
+    border-radius:7px; padding:7px 11px; font:inherit; font-size:13.5px;
+  }
+  input[type=search]{width:230px}
+  input:focus-visible,select:focus-visible,button:focus-visible,li:focus-visible{
+    outline:2px solid var(--high); outline-offset:2px}
+  button{
+    background:var(--panel2); border:1px solid var(--line); color:var(--ink);
+    border-radius:7px; padding:7px 12px; font:inherit; font-size:13.5px; cursor:pointer}
+  button:hover{border-color:var(--faint)}
+  button.on{background:var(--high); border-color:var(--high); color:#08111a; font-weight:600}
+
+  main{flex:1; display:grid; grid-template-columns:340px 1fr; min-height:0}
+
+  /* ---- track list ---- */
+  #list{border-right:1px solid var(--line); overflow-y:auto; background:var(--panel)}
+  #list li{
+    padding:10px 16px; border-bottom:1px solid var(--line); cursor:pointer;
+    display:grid; grid-template-columns:1fr auto; gap:2px 10px; align-items:baseline}
+  #list li:hover{background:var(--panel2)}
+  #list li[aria-selected=true]{background:var(--panel2); box-shadow:inset 3px 0 var(--low)}
+  .t-name{font-size:13.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+  .t-bpm{font-size:12.5px; color:var(--dim)}
+  .t-meta{font-size:12px; color:var(--faint); grid-column:1/-1;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+  .flag{color:var(--warn)}
+  .vox-tag{color:var(--vox)}
+
+  /* ---- detail ---- */
+  #detail{overflow-y:auto; padding:26px 30px 60px}
+  .empty{color:var(--faint); padding:60px 0; max-width:34ch}
+  h2{font-size:23px; font-weight:640; letter-spacing:-.015em; line-height:1.25;
+     margin-bottom:14px; max-width:60ch}
+
+  .chips{display:flex; gap:8px; flex-wrap:wrap; margin-bottom:26px}
+  .chip{
+    background:var(--panel); border:1px solid var(--line); border-radius:8px;
+    padding:7px 12px; font-size:13px; display:flex; align-items:baseline; gap:7px}
+  .chip .k{color:var(--faint); font-size:11.5px}
+  .chip.hero{border-color:var(--low)}
+  .chip.vox{border-color:var(--vox)}
+  .chip.rev{border-color:var(--warn); color:var(--warn)}
+
+  /* ---- timeline: the centrepiece ---- */
+  .tl-wrap{position:relative; margin-bottom:8px}
+  canvas{width:100%; height:150px; display:block; border-radius:8px;
+    background:var(--panel); cursor:crosshair}
+  #marks{position:absolute; inset:0; pointer-events:none}
+  .mk{position:absolute; top:0; bottom:22px; width:2px; pointer-events:auto; cursor:pointer}
+  .mk i{position:absolute; inset:0; background:currentColor; opacity:.85}
+  .mk span{
+    position:absolute; bottom:-21px; left:0; transform:translateX(-50%);
+    font-size:10.5px; white-space:nowrap; color:currentColor;
+    background:var(--bg); padding:1px 5px; border-radius:4px}
+  .mk:hover i,.mk.sel i{opacity:1; box-shadow:0 0 0 1px currentColor}
+  .mk.sel span{font-weight:700}
+  #head{position:absolute; top:0; bottom:22px; width:1px; background:var(--ink);
+    display:none; pointer-events:none}
+  .axis{display:flex; justify-content:space-between; color:var(--faint);
+    font-size:11.5px; margin:26px 0 22px}
+
+  /* ---- moments ---- */
+  .moments{width:100%; border-collapse:collapse; margin-bottom:30px; font-size:13.5px}
+  .moments th{
+    text-align:left; color:var(--faint); font-weight:500; font-size:11.5px;
+    padding:0 10px 7px; border-bottom:1px solid var(--line)}
+  .moments td{padding:8px 10px; border-bottom:1px solid var(--line)}
+  .moments tr{cursor:pointer}
+  .moments tr:hover td{background:var(--panel)}
+  .moments tr.sel td{background:var(--panel2)}
+  .dot{display:inline-block; width:8px; height:8px; border-radius:2px; margin-right:8px}
+  .bar{height:4px; border-radius:2px; background:var(--line); width:56px; display:inline-block}
+  .bar>i{display:block; height:100%; border-radius:2px; background:var(--high)}
+
+  h3{font-size:12px; color:var(--faint); font-weight:600; margin:0 0 12px}
+  .grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(158px,1fr));
+    gap:1px; background:var(--line); border:1px solid var(--line);
+    border-radius:8px; overflow:hidden; margin-bottom:28px}
+  .cell{background:var(--panel); padding:11px 13px}
+  .cell .k{color:var(--faint); font-size:11.5px; display:block; margin-bottom:3px}
+  .cell .v{font-size:15px}
+
+  .bands{display:flex; height:26px; border-radius:6px; overflow:hidden; margin-bottom:9px}
+  .bands div{display:flex; align-items:center; justify-content:center;
+    font-size:10.5px; color:#0c0e13; font-weight:650}
+  .legend{color:var(--faint); font-size:12px; margin-bottom:28px}
+
+  .note{background:var(--panel); border:1px solid var(--line);
+    border-left:2px solid var(--warn); border-radius:6px;
+    padding:11px 14px; font-size:13.5px; margin-bottom:24px; max-width:70ch}
+  .note.vox{border-left-color:var(--vox)}
+  .note b{font-weight:600}
+  .ev{color:var(--dim); font-size:12.5px; margin-top:5px}
+
+  #player{display:flex; align-items:center; gap:12px; margin-bottom:20px;
+    font-size:13px; color:var(--dim); flex-wrap:wrap}
+  audio{height:34px}
+  @media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Crate</h1>
+  <div class="counts" id="counts"></div>
+  <div class="spacer"></div>
+  <input type="search" id="q" placeholder="Search tracks" aria-label="Search tracks">
+  <select id="genre" aria-label="Filter by category"></select>
+  <button id="fRev">Needs review</button>
+  <button id="fVox">Vocals only</button>
+</header>
+
+<main>
+  <ul id="list" role="listbox" aria-label="Tracks"></ul>
+  <section id="detail"><p class="empty">Pick a track to see its tempo, key,
+    category and where its drops and breakdowns are.</p></section>
+</main>
+
+<script>
+const TRACKS = /*__CRATE_DATA__*/[];
+
+const COLOR = {
+  drop:'#f2643c', 'main section':'#f2643c', buildup:'#e0b83e',
+  breakdown:'#4ea8de', intro:'#5a6474', outro:'#5a6474', vocal:'#a97fd6'
+};
+const fmt = s => `${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,'0')}`;
+const esc = s => String(s??'').replace(/[&<>"]/g, c =>
+  ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+let sel = null, selMoment = null, audioMap = {}, audioEl = null;
+
+/* ---------- filtering ---------- */
+const F = {q:'', genre:'', review:false, vox:false};
+
+function visible(){
+  return TRACKS.filter(t => {
+    if (F.review && !t.needs_review) return false;
+    if (F.vox && !(t.vocal_analysis||{}).is_acapella) return false;
+    if (F.genre && t.category !== F.genre) return false;
+    if (F.q && !(t.file+' '+(t.category||'')).toLowerCase().includes(F.q)) return false;
+    return true;
+  });
+}
+
+function renderList(){
+  const rows = visible();
+  document.getElementById('list').innerHTML = rows.map(t => {
+    const i = TRACKS.indexOf(t);
+    const vox = (t.vocal_analysis||{}).is_acapella;
+    const n = (t.moments||[]).length;
+    return `<li role="option" tabindex="0" data-i="${i}"
+      aria-selected="${sel===i}">
+      <span class="t-name">${esc(t.file.replace(/\.[^.]+$/,''))}</span>
+      <span class="t-bpm num">${t.bpm?t.bpm.toFixed(1):'--'}</span>
+      <span class="t-meta">${vox?'<span class="vox-tag">Vocals</span>':esc(t.category||'—')}
+        · ${t.camelot||'--'} · ${n} cue${n===1?'':'s'}
+        ${t.needs_review?'<span class="flag">· review</span>':''}</span></li>`;
+  }).join('') || `<li style="color:var(--faint);cursor:default">No tracks match.</li>`;
+
+  document.getElementById('counts').innerHTML =
+    `<b>${rows.length}</b> of ${TRACKS.length} tracks ·
+     <b>${TRACKS.filter(t=>(t.vocal_analysis||{}).is_acapella).length}</b> vocals ·
+     <b>${TRACKS.filter(t=>t.needs_review).length}</b> to review`;
+}
+
+/* ---------- timeline ---------- */
+function drawCurve(t){
+  const c = document.getElementById('cv'); if (!c) return;
+  const st = t.structure||{}, rms = st.energy_curve||[], sub = st.sub_curve||[];
+  const dpr = devicePixelRatio||1, W = c.clientWidth, H = c.clientHeight;
+  c.width = W*dpr; c.height = H*dpr;
+  const g = c.getContext('2d'); g.scale(dpr,dpr); g.clearRect(0,0,W,H);
+  if (!rms.length) {
+    g.fillStyle='#5a6474'; g.font='13px -apple-system,sans-serif';
+    g.fillText('No beat grid — energy curve unavailable', 14, H/2); return;
+  }
+  const bw = W/rms.length;
+  // Overall energy behind, sub-bass in front: the gap between them is the
+  // breakdown, which is exactly what the eye should catch first.
+  rms.forEach((v,i) => {
+    const h = Math.max(1, v*(H-14));
+    g.fillStyle = 'rgba(78,168,222,.30)';
+    g.fillRect(i*bw, H-h-7, Math.max(bw-.5,.7), h);
+  });
+  sub.forEach((v,i) => {
+    const h = Math.max(1, v*(H-14)*.82);
+    g.fillStyle = 'rgba(242,100,60,.85)';
+    g.fillRect(i*bw, H-h-7, Math.max(bw-.5,.7), h);
+  });
+}
+
+function renderMarks(t){
+  const box = document.getElementById('marks'); if (!box) return;
+  const dur = t.duration_sec||1;
+  box.innerHTML = (t.moments||[]).map((m,i) => {
+    const col = COLOR[m.type]||'#e9ecf1';
+    return `<div class="mk ${selMoment===i?'sel':''}" data-m="${i}"
+      style="left:${(m.time/dur*100).toFixed(3)}%;color:${col}"
+      title="${esc(m.label)} — ${fmt(m.time)}">
+      <i></i><span>${esc(m.label)}</span></div>`;
+  }).join('');
+  box.querySelectorAll('.mk').forEach(el =>
+    el.onclick = () => pickMoment(+el.dataset.m));
+}
+
+function pickMoment(i){
+  const t = TRACKS[sel];
+  selMoment = i;
+  renderMarks(t);
+  document.querySelectorAll('.moments tr[data-m]').forEach(r =>
+    r.classList.toggle('sel', +r.dataset.m === i));
+  if (audioEl && audioEl.src) { audioEl.currentTime = t.moments[i].time; audioEl.play(); }
+}
+
+/* ---------- detail ---------- */
+function renderDetail(){
+  const d = document.getElementById('detail');
+  if (sel === null) return;
+  const t = TRACKS[sel], v = t.vocal_analysis||{}, st = t.structure||{};
+  const vox = v.is_acapella, tb = t.tonal_balance||{};
+
+  const chips = [
+    t.bpm ? `<div class="chip hero"><span class="k">BPM</span>
+      <span class="num">${t.bpm.toFixed(2)}</span></div>` : '',
+    t.camelot ? `<div class="chip"><span class="k">Key</span>
+      ${t.camelot} · ${esc(t.key||'')}</div>` : '',
+    `<div class="chip ${vox?'vox':''}"><span class="k">Category</span>
+      ${esc(t.category||'—')}${t.category_confidence!=null
+        ? ` <span class="k num">${(t.category_confidence*100).toFixed(0)}%</span>`:''}</div>`,
+    `<div class="chip"><span class="k">Length</span>${t.duration||'--'}</div>`,
+    t.needs_review ? `<div class="chip rev">Needs review</div>` : ''
+  ].join('');
+
+  const notes = [];
+  if (vox) notes.push(`<div class="note vox"><b>Filed under Vocals.</b>
+    This reads as an acapella — almost no sub-bass and few percussive onsets — so
+    no genre was assigned. A genre model would guess from vocal tone alone, which
+    is not reliable.
+    <div class="ev">${Object.entries(v.evidence||{})
+      .map(([k,val])=>`${val?'✓':'✗'} ${k.replace(/_/g,' ')}`).join(' · ')}</div></div>`);
+  else if (v.needs_review) notes.push(`<div class="note"><b>Might be an acapella.</b>
+    Some vocal indicators present but not all (score ${v.score}). Worth a listen.</div>`);
+  if (t.needs_review && t.review_reason) notes.push(
+    `<div class="note"><b>Flagged:</b> ${esc(t.review_reason)}.
+     Nothing was guessed — this is left for you to confirm.</div>`);
+  if (t.bpm_reliable === false) notes.push(`<div class="note">
+    <b>Tempo is uncertain.</b> The beat tracker had low confidence, so the cue
+    positions below may be off-grid. Check against Rekordbox's own analysis.</div>`);
+
+  const gp = (t.genre_predictions||[]).slice(0,5);
+  const alt = gp.length>1 ? `<h3>Other genre candidates</h3>
+    <table class="moments"><tbody>${gp.slice(1).map(p=>`<tr><td>${esc(p.label)}</td>
+    <td style="color:var(--faint)">${esc(p.parent)}</td>
+    <td style="width:80px"><span class="bar"><i style="width:${(p.confidence*100).toFixed(0)}%"></i></span></td>
+    <td class="num" style="width:56px">${(p.confidence*100).toFixed(1)}%</td></tr>`).join('')}
+    </tbody></table>` : '';
+
+  const cells = [
+    ['Loudness', t.loudness_lufs!=null?t.loudness_lufs+' LUFS':'—'],
+    ['Danceability', t.danceability ?? '—'],
+    ['Dynamic range', t.dynamic_complexity ?? '—'],
+    ['Onsets / sec', t.onset_rate ?? '—'],
+    ['Brightness', t.brightness_hz?Math.round(t.brightness_hz)+' Hz':'—'],
+    ['Beats', t.beat_count ?? '—'],
+    ['Bars', st.bars_analysed ?? '—'],
+    ['Drops', st.drop_count ?? 0],
+    ['Breakdowns', st.breakdown_count ?? 0],
+    ['Tempo confidence', t.bpm_confidence!=null?(t.bpm_confidence*100).toFixed(0)+'%':'—'],
+    ['Key confidence', t.key_confidence!=null?(t.key_confidence*100).toFixed(0)+'%':'—'],
+    ['File size', t.size_mb?t.size_mb+' MB':'—'],
+  ].map(([k,val])=>`<div class="cell"><span class="k">${k}</span>
+    <span class="v num">${esc(val)}</span></div>`).join('');
+
+  const bandCols = {sub:'--low',lowmid:'#d4763e',mid:'--mid',high:'--high',air:'#7fc4e8'};
+  const bands = Object.entries(tb).map(([k,val])=>{
+    const col = bandCols[k].startsWith('--')?`var(${bandCols[k]})`:bandCols[k];
+    return `<div style="width:${(val*100).toFixed(1)}%;background:${col}"
+      title="${k} ${(val*100).toFixed(1)}%">${val>0.09?k:''}</div>`;}).join('');
+
+  d.innerHTML = `
+    <h2>${esc(t.file.replace(/\.[^.]+$/,''))}</h2>
+    <div class="chips">${chips}</div>
+    ${notes.join('')}
+    <div id="player">
+      <button id="loadAudio">Load audio folder for playback</button>
+      <audio id="au" controls preload="none" style="display:none"></audio>
+      <span id="auMsg">Optional — lets you click a cue to jump to it.</span>
+    </div>
+    <h3>Energy over time — orange is sub-bass, blue is everything else</h3>
+    <div class="tl-wrap">
+      <canvas id="cv"></canvas><div id="marks"></div><div id="head"></div>
+    </div>
+    <div class="axis"><span>0:00</span><span>${t.duration||''}</span></div>
+
+    <h3>Cue points</h3>
+    ${(t.moments||[]).length ? `<table class="moments">
+      <thead><tr><th>Moment</th><th>Time</th><th>Bar</th><th colspan="2">Confidence</th></tr></thead>
+      <tbody>${t.moments.map((m,i)=>`<tr data-m="${i}" class="${selMoment===i?'sel':''}">
+        <td><span class="dot" style="background:${COLOR[m.type]||'#888'}"></span>${esc(m.label)}</td>
+        <td class="num">${fmt(m.time)}</td>
+        <td class="num" style="color:var(--faint)">${m.bar}</td>
+        <td style="width:70px"><span class="bar"><i style="width:${(m.confidence*100).toFixed(0)}%"></i></span></td>
+        <td class="num" style="width:50px">${(m.confidence*100).toFixed(0)}%</td></tr>`).join('')}
+      </tbody></table>`
+      : `<p class="legend">No structural changes found — the track holds a steady
+         energy throughout, or the beat grid was too weak to segment.</p>`}
+
+    ${alt}
+    <h3>Frequency balance</h3>
+    <div class="bands">${bands}</div>
+    <p class="legend">Share of total energy per band. A heavy left side means
+      bass-forward; a thin left side is one of the acapella signals.</p>
+    <h3>Everything measured</h3>
+    <div class="grid">${cells}</div>
+    ${t.errors&&t.errors.length?`<div class="note"><b>Errors:</b>
+      ${t.errors.map(esc).join('; ')}</div>`:''}`;
+
+  drawCurve(t); renderMarks(t);
+  d.querySelectorAll('.moments tr[data-m]').forEach(r =>
+    r.onclick = () => pickMoment(+r.dataset.m));
+  document.getElementById('loadAudio').onclick = pickFolder;
+  audioEl = document.getElementById('au');
+  hookAudio(t);
+  d.scrollTop = 0;
+}
+
+/* ---------- optional local playback ---------- */
+function pickFolder(){
+  const inp = document.createElement('input');
+  inp.type='file'; inp.webkitdirectory = true; inp.multiple = true;
+  inp.onchange = () => {
+    audioMap = {};
+    for (const f of inp.files) audioMap[f.name] = f;
+    document.getElementById('auMsg').textContent =
+      `${Object.keys(audioMap).length} files loaded — click any cue to jump to it.`;
+    hookAudio(TRACKS[sel]);
+  };
+  inp.click();
+}
+
+function hookAudio(t){
+  const f = audioMap[t.file]; if (!f || !audioEl) return;
+  audioEl.src = URL.createObjectURL(f);
+  audioEl.style.display = '';
+  document.getElementById('loadAudio').style.display = 'none';
+  const head = document.getElementById('head');
+  audioEl.ontimeupdate = () => {
+    head.style.display='block';
+    head.style.left = (audioEl.currentTime/(t.duration_sec||1)*100)+'%';
+  };
+}
+
+/* ---------- wiring ---------- */
+document.getElementById('list').addEventListener('click', e => {
+  const li = e.target.closest('li[data-i]'); if (!li) return;
+  sel = +li.dataset.i; selMoment = null; renderList(); renderDetail();
+});
+document.getElementById('list').addEventListener('keydown', e => {
+  if (e.key==='Enter'||e.key===' ') { e.preventDefault(); e.target.click(); }
+});
+document.getElementById('q').oninput = e => { F.q = e.target.value.toLowerCase(); renderList(); };
+document.getElementById('genre').onchange = e => { F.genre = e.target.value; renderList(); };
+document.getElementById('fRev').onclick = e => {
+  F.review = !F.review; e.target.classList.toggle('on', F.review); renderList(); };
+document.getElementById('fVox').onclick = e => {
+  F.vox = !F.vox; e.target.classList.toggle('on', F.vox); renderList(); };
+addEventListener('resize', () => { if (sel!==null) drawCurve(TRACKS[sel]); });
+
+const cats = [...new Set(TRACKS.map(t=>t.category).filter(Boolean))].sort();
+document.getElementById('genre').innerHTML =
+  `<option value="">All categories</option>` +
+  cats.map(c=>`<option>${esc(c)}</option>`).join('');
+renderList();
+</script>
+</body>
+</html>

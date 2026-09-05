@@ -1,0 +1,34 @@
+# Virtual environment - ~400MB of TensorFlow, reinstall with ./setup.sh
+.venv/
+
+# Python bytecode
+__pycache__/
+*.pyc
+
+# Never commit audio. The library is ~49GB and belongs on disk, not in git.
+*.wav
+*.mp3
+*.aiff
+*.aif
+*.flac
+*.m4a
+*.ogg
+*.wma
+
+# Per-machine user data, not source: the track catalogue, corrections and
+# crates. Rebuildable by re-scanning; can grow large.
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+
+# Generated analysis output (viewer.html, rekordbox.xml, library.csv, results.json)
+crate_output/
+crate_test/
+crate_sanity/
+crate_validation/
+
+# Model weights live in ~/.crate/models, downloaded by setup.sh
+models/
+
+.DS_Store
