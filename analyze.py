@@ -217,6 +217,50 @@ def find_moments(bars, downbeats, dur):
             continue
         merged.append(m)
 
+    # Number each kind in playing order, so labels read "Drop 1, Drop 2" and
+    # "Buildup 1, Buildup 2". Numbering happens here, after merging, rather
+    # than where moments are created: the old code numbered drops by their
+    # index in the drops list, so a track whose first high-energy section was
+    # classed "Main section" started counting at Drop 2 and never had a Drop 1.
+    seen = {}
+    for m in merged:
+        if m["type"] in ("intro", "outro", "main section"):
+            continue
+        seen[m["type"]] = seen.get(m["type"], 0) + 1
+        m["index"] = seen[m["type"]]
+        m["label"] = f"{m['type'].capitalize()} {seen[m['type']]}"
+
+    # Rekordbox has eight hot cue slots and a DJ wants all eight usable. Where
+    # a track has less detected structure than that, top up on 32-bar phrase
+    # boundaries - real mix points in 4/4 dance music. Labelled "Phrase N" so
+    # detected structure is never disguised as something it isn't.
+    if len(merged) < 8 and downbeats is not None and len(downbeats) >= 16:
+        bar_sec = (downbeats[1] - downbeats[0]) if len(downbeats) > 1 else 2.0
+        extra = []
+        # Prefer wide, obviously-musical spacing; fall back to tighter phrase
+        # boundaries only when a track is too short to yield eight that way.
+        # 32, 16 and 8 are all real phrase lengths in 4/4 dance music.
+        # (bar step, how far a new cue must stay from an existing one, in bars).
+        # Later passes relax both, so a short track can still fill eight slots.
+        for step, clear in ((32, 3.5), (16, 3.5), (8, 2.0), (4, 1.5)):
+            if len(merged) + len(extra) >= 8:
+                break
+            for b in range(0, len(downbeats), step):
+                if len(merged) + len(extra) >= 8:
+                    break
+                t = float(downbeats[b])
+                near = [m["time"] for m in merged] + [e["time"] for e in extra]
+                if all(abs(t - u) > bar_sec * clear for u in near):
+                    extra.append({"type": "phrase", "bar": int(b), "time": t,
+                                  "confidence": 0.5, "label": "Phrase"})
+        merged = sorted(merged + extra, key=lambda x: x["time"])
+        n_ph = 0
+        for m in merged:
+            if m["type"] == "phrase":
+                n_ph += 1
+                m["index"] = n_ph
+                m["label"] = f"Phrase {n_ph}"
+
     stats = {
         "bars_analysed": int(n),
         "drop_count": sum(1 for m in merged if m["type"] == "drop"),
