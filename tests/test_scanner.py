@@ -63,6 +63,19 @@ def test_a_vanished_file_is_flagged_not_deleted(tmp_path):
     assert con.execute("SELECT count(*) c FROM tracks").fetchone()["c"] == 1
 
 
+def test_scanning_one_folder_does_not_flag_a_sibling_with_a_shared_prefix(tmp_path):
+    music = tmp_path / "Music"; music.mkdir()
+    other = tmp_path / "MusicOld"; other.mkdir()
+    (music / "a.wav").write_bytes(b"RIFF0000WAVE")
+    (other / "b.wav").write_bytes(b"RIFF0000WAVE")
+    con = connect(tmp_path / "l.db")
+    scan(con, music)
+    scan(con, other)
+    scan(con, music)          # rescanning Music must not touch MusicOld's track
+    row = con.execute("SELECT missing FROM tracks WHERE filename='b.wav'").fetchone()
+    assert row["missing"] == 0
+
+
 def test_pending_lists_only_unanalysed(tmp_path):
     music = tmp_path / "music"; music.mkdir()
     make_audio(music, "a.wav"); make_audio(music, "b.wav")

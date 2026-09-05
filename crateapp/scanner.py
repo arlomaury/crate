@@ -39,7 +39,7 @@ def scan(con, folder):
     # A file that has gone is flagged, never deleted - its crate membership and
     # corrections are still worth keeping if the drive comes back.
     for row in con.execute("SELECT id, path FROM tracks WHERE missing=0"):
-        if row["path"] not in seen and row["path"].startswith(str(folder)):
+        if row["path"] not in seen and Path(row["path"]).is_relative_to(folder):
             con.execute("UPDATE tracks SET missing=1 WHERE id=?", (row["id"],))
             stats["missing"] += 1
 
