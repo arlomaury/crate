@@ -438,7 +438,16 @@ class GenreModel:
 
 # --------------------------------------------------------------- main analysis
 
-def analyse(path, gm, verbose=True):
+def embedding_path(emb_dir, track_path):
+    """
+    Where a track's embedding is cached. Keyed by a hash of the resolved path
+    so filenames of any length or character set map to a safe flat filename.
+    """
+    key = hashlib.sha1(str(Path(track_path).resolve()).encode("utf-8")).hexdigest()
+    return Path(emb_dir) / f"{key}.npy"
+
+
+def analyse(path, gm, verbose=True, emb_dir=None):
     t0 = time.time()
     p = Path(path)
     res = {"file": p.name, "path": str(p.resolve()),
@@ -530,6 +539,17 @@ def analyse(path, gm, verbose=True):
                     voc["needs_review"] = False
                     voc["evidence"]["voice_model_agrees"] = True
             mean_emb = emb.mean(axis=0)
+            # Cache the embedding rather than discarding it. Recomputing means
+            # re-reading the audio, and the crate-matching in the app needs to
+            # recompute centroids on every correction. Kept out of results.json
+            # on purpose - that payload gets injected wholesale into viewer.html.
+            if emb_dir is not None:
+                try:
+                    dest = embedding_path(emb_dir, p)
+                    if not dest.exists():
+                        np.save(dest, mean_emb.astype(np.float32))
+                except Exception as e:
+                    res["errors"].append(f"embedding cache: {e}")
             gap = gm.taxonomy_gap_signal(mean_emb, preds[0]["label"])
             if gap:
                 res["taxonomy_gap_signal"] = gap
@@ -689,6 +709,8 @@ def main():
     out = Path(args.out).expanduser()
     out.mkdir(parents=True, exist_ok=True)
     results_path = out / "results.json"
+    emb_dir = out / "embeddings"
+    emb_dir.mkdir(exist_ok=True)
 
     files = sorted(p for p in src.rglob("*")
                    if p.suffix.lower() in AUDIO_EXT and not p.name.startswith("._"))
@@ -716,7 +738,7 @@ def main():
     for i, f in enumerate(files, 1):
         print(f"[{i}/{len(files)}] {f.name[:52]}")
         try:
-            tracks.append(analyse(f, gm))
+            tracks.append(analyse(f, gm, emb_dir=emb_dir))
         except KeyboardInterrupt:
             print("\nInterrupted - saving what is done so far.")
             break
