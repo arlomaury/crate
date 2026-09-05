@@ -627,12 +627,35 @@ def analyse(path, gm, verbose=True, emb_dir=None):
 
 # ------------------------------------------------------------------- exports
 
+# Colours Rekordbox itself uses, read out of a real exported collection, so
+# imported cues look native rather than arbitrary. Keyed to moment type and
+# matched to the viewer's palette: drops orange, breakdowns blue, builds amber.
+CUE_COLOURS = {
+    "drop":         (224, 100, 27),
+    "breakdown":    (69, 172, 219),
+    "buildup":      (255, 140, 0),
+    "main section": (48, 210, 110),
+    "intro":        (48, 210, 110),
+    "outro":        (48, 210, 110),
+}
+DEFAULT_CUE_COLOUR = (48, 210, 110)
+
+
 def write_rekordbox_xml(tracks, out):
     """
-    rekordbox.xml with genre, tempo, key and a memory cue at every moment.
+    rekordbox.xml with genre, tempo, key and a cue at every detected moment.
 
-    Import via Rekordbox > File > Import Collection. Cues land on downbeats so
-    they are usable on a CDJ.
+    Each moment is written twice, on purpose:
+
+      * as a memory cue (Num="-1") - unlimited in number, so nothing is lost
+        on a track with more than eight moments;
+      * as a hot cue (Num="0".."7") with an RGB colour - because that is what
+        Rekordbox actually shows on the waveform. Every one of the 41 cues in
+        this DJ's own exported collection was a hot cue with a colour; memory
+        cues alone did not display, which is what made the first import look
+        empty.
+
+    Cue times land on downbeats, so they stay usable on a CDJ.
     """
     from xml.sax.saxutils import escape
     from urllib.parse import quote
@@ -656,8 +679,15 @@ def write_rekordbox_xml(tracks, out):
         L.append(f'      <TEMPO Inizio="0.000" Bpm="{t.get("bpm", 0)}" '
                  f'Metro="4/4" Battito="1"/>')
         for n, m in enumerate(t.get("moments", [])):
-            L.append(f'      <POSITION_MARK Name="{escape(m["label"])}" Type="0" '
-                     f'Start="{m["time"]:.3f}" Num="-1"/>')
+            label = escape(m["label"])
+            start = f'{m["time"]:.3f}'
+            L.append(f'      <POSITION_MARK Name="{label}" Type="0" '
+                     f'Start="{start}" Num="-1"/>')
+            if n < 8:   # A-H, the only hot cue slots Rekordbox has
+                r, g, b = CUE_COLOURS.get(m.get("type", ""), DEFAULT_CUE_COLOUR)
+                L.append(f'      <POSITION_MARK Name="{label}" Type="0" '
+                         f'Start="{start}" Num="{n}" '
+                         f'Red="{r}" Green="{g}" Blue="{b}"/>')
         L.append('    </TRACK>')
 
     L += ['  </COLLECTION>', '  <PLAYLISTS>',
