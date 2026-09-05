@@ -664,9 +664,11 @@ def write_rekordbox_xml(tracks, out):
          '  <PRODUCT Name="Crate" Version="1.0" Company="local"/>',
          f'  <COLLECTION Entries="{len(tracks)}">']
 
+    emitted = []
     for i, t in enumerate(tracks, 1):
         if t.get("errors") and "bpm" not in t:
             continue
+        emitted.append(i)
         loc = "file://localhost" + quote(t["path"])
         name = escape(Path(t["file"]).stem)
         L.append(
@@ -690,8 +692,19 @@ def write_rekordbox_xml(tracks, out):
                          f'Red="{r}" Green="{g}" Blue="{b}"/>')
         L.append('    </TRACK>')
 
+    # Rekordbox's xml panel browses the PLAYLIST tree, not the collection. An
+    # empty ROOT node therefore renders as nothing to expand, which is exactly
+    # what an import of this file used to look like - the tracks were all
+    # present in COLLECTION, but with no playlist there was no way to reach
+    # them. Real exports nest Type="1" playlist nodes that reference tracks by
+    # TrackID, so emit one named after the output folder.
+    playlist = escape(Path(out).resolve().parent.name or "Crate")
     L += ['  </COLLECTION>', '  <PLAYLISTS>',
-          '    <NODE Type="0" Name="ROOT" Count="0"/>',
+          '    <NODE Type="0" Name="ROOT" Count="1">',
+          f'      <NODE Name="{playlist}" Type="1" KeyType="0" '
+          f'Entries="{len(emitted)}">']
+    L += [f'        <TRACK Key="{i}"/>' for i in emitted]
+    L += ['      </NODE>', '    </NODE>',
           '  </PLAYLISTS>', '</DJ_PLAYLISTS>']
     Path(out).write_text("\n".join(L), encoding="utf-8")
 
