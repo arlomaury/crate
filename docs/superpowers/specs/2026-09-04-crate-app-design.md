@@ -124,8 +124,13 @@ Three bands:
 | Band | Behaviour |
 |---|---|
 | **Confident** — clear best match, well above floor | Auto-filed into that crate |
-| **Uncertain** — matches a crate weakly, or two crates nearly tie | Provisionally filed, *and* shown in the review queue marked unconfirmed — never presented as a settled answer |
+| **Uncertain** — matches a crate weakly, or two crates nearly tie | Sorted into its best-guess crate **and** listed in **Uncertain** — so it is usable straight away, but never presented as settled |
 | **Unknown** — below the floor for every crate | Held in Unsorted, labelled with its standard genre |
+
+An uncertain track is a real member of its crate, not a stub: it shows up when
+browsing that crate and exports with it. **Uncertain** is a view over those
+provisional placements, not a holding pen — nothing waits on the DJ to become
+usable. A track leaves the Uncertain list once confirmed or corrected.
 
 Thresholds start deliberately conservative — over-asking rather than
 over-assuming — and get calibrated against real data (see §10).
@@ -145,9 +150,22 @@ This is the heart of the app.
    nearest crates and their similarities, and playable audio.
 3. They assign it — to an existing crate, **or to a brand-new crate created right
    there in the queue**, without leaving the flow.
-4. That assignment is stored as ground truth and the crate's centroid is
-   recomputed to include it.
-5. Every subsequent track is classified against the improved centroid.
+4. The assignment asks one thing: **move, or also-add?**
+
+   - **Move** — leave the crate it was provisionally sorted into and go to the
+     chosen one. The default, because a correction usually means the guess was
+     simply wrong.
+   - **Also add** — join the new crate while staying in the old one. Crates are
+     virtual, so genuine multi-crate membership costs nothing and is often
+     right: a track can legitimately be both House and Party.
+
+   One click, defaulting to move, and recorded either way. Only a *move* counts
+   as the model getting it wrong; an also-add is additional truth rather than a
+   contradiction. Both feed the centroids.
+
+5. The assignment is stored as ground truth and the affected crates' centroids
+   are recomputed to include it.
+6. Every subsequent track is classified against the improved centroids.
 
 A crate becomes usable at roughly 5–10 tracks; Afro House reached 70% recall from
 23. Corrections are permanent and cumulative — the app is strictly better at the
@@ -249,7 +267,10 @@ embeddings   (track_id, vector BLOB)          -- 1280 floats, the expensive bit
 analysis     (track_id, moments JSON, energy JSON, vocal JSON, genre_preds JSON)
 crates       (id, name, created_at, is_gap_genre)
 assignments  (track_id, crate_id, source: 'auto'|'human', confidence, created_at)
-corrections  (track_id, from_crate, to_crate, created_at)   -- audit trail
+             -- several rows per track = genuine multi-crate membership,
+             --   which is what "also add" produces
+corrections  (track_id, from_crate, to_crate, created_at)   -- audit trail;
+             --   from_crate NULL for an also-add (nothing was wrong)
 config       (key, value)                      -- watched folders, thresholds
 ```
 
@@ -305,8 +326,7 @@ second one.
    library. Starts conservative until then.
 2. **Rekordbox round-trip unverified** (§6). Should be tested before the full
    library run, since a fix would otherwise mean re-exporting everything.
-3. **Multi-crate membership** — allowed by the schema; the UI for it is
-   deliberately deferred until it's actually wanted.
+3. ~~Multi-crate membership deferred~~ — now core, via "also add" (§5).
 4. **Half-time/double-time BPM** disambiguation remains unsolved, as today.
 
 ---
