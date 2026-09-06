@@ -704,6 +704,12 @@ def write_rekordbox_xml(tracks, out):
     from xml.sax.saxutils import escape
     from urllib.parse import quote
 
+    def esc(s):
+        # escape() alone only handles &, < and > - not the double quote,
+        # so a title containing '"' would otherwise produce a malformed
+        # attribute value that Rekordbox rejects outright.
+        return escape(s or "", {'"': "&quot;"})
+
     L = ['<?xml version="1.0" encoding="UTF-8"?>', '<DJ_PLAYLISTS Version="1.0.0">',
          '  <PRODUCT Name="Crate" Version="1.0" Company="local"/>',
          f'  <COLLECTION Entries="{len(tracks)}">']
@@ -714,18 +720,18 @@ def write_rekordbox_xml(tracks, out):
             continue
         emitted.append(i)
         loc = "file://localhost" + quote(t["path"])
-        name = escape(Path(t["file"]).stem)
+        name = esc(Path(t["file"]).stem)
         L.append(
             f'    <TRACK TrackID="{i}" Name="{name}" Kind="Audio File" '
             f'Location="{loc}" AverageBpm="{t.get("bpm", 0)}" '
-            f'Tonality="{escape(t.get("camelot", ""))}" '
-            f'Genre="{escape(t.get("category", ""))}" '
+            f'Tonality="{esc(t.get("camelot", ""))}" '
+            f'Genre="{esc(t.get("category", ""))}" '
             f'TotalTime="{int(t.get("duration_sec", 0))}" '
-            f'Comments="{escape(t.get("category_basis", ""))}">')
+            f'Comments="{esc(t.get("category_basis", ""))}">')
         L.append(f'      <TEMPO Inizio="0.000" Bpm="{t.get("bpm", 0)}" '
                  f'Metro="4/4" Battito="1"/>')
         for n, m in enumerate(t.get("moments", [])):
-            label = escape(m["label"])
+            label = esc(m["label"])
             start = f'{m["time"]:.3f}'
             L.append(f'      <POSITION_MARK Name="{label}" Type="0" '
                      f'Start="{start}" Num="-1"/>')
@@ -742,7 +748,7 @@ def write_rekordbox_xml(tracks, out):
     # present in COLLECTION, but with no playlist there was no way to reach
     # them. Real exports nest Type="1" playlist nodes that reference tracks by
     # TrackID, so emit one named after the output folder.
-    playlist = escape(Path(out).resolve().parent.name or "Crate")
+    playlist = esc(Path(out).resolve().parent.name or "Crate")
     L += ['  </COLLECTION>', '  <PLAYLISTS>',
           '    <NODE Type="0" Name="ROOT" Count="1">',
           f'      <NODE Name="{playlist}" Type="1" KeyType="0" '

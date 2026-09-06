@@ -15,6 +15,20 @@ def test_ensure_crate_is_idempotent(con):
     assert ensure_crate(con, "House") == ensure_crate(con, "House")
 
 
+def test_ensure_crate_rejects_blank_names(con):
+    with pytest.raises(ValueError):
+        ensure_crate(con, "   ")
+
+
+def test_ensure_crate_keeps_path_hostile_names_verbatim(con):
+    """Sanitisation belongs at the exporter, not the database - a crate is
+    free to be called anything meaningful, including something that would
+    not be a safe folder name."""
+    cid = ensure_crate(con, "Drum & Bass / Jungle")
+    row = con.execute("SELECT name FROM crates WHERE id=?", (cid,)).fetchone()
+    assert row["name"] == "Drum & Bass / Jungle"
+
+
 def test_a_confident_result_is_assigned(con):
     auto_assign(con, 1, {"crate": "House", "band": "confident", "similarity": 0.9})
     row = con.execute("SELECT * FROM assignments WHERE track_id=1").fetchone()

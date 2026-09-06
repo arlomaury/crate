@@ -5,7 +5,16 @@ created."""
 
 
 def ensure_crate(con, name):
-    """Get-or-create a crate by name. Idempotent."""
+    """Get-or-create a crate by name. Idempotent.
+
+    Only genuinely meaningless names (empty or whitespace-only) are
+    rejected here. A crate is free to be called anything else, including
+    something like "Drum & Bass / Jungle" that would not be a safe folder
+    name - that sanitisation belongs at the point a crate name becomes a
+    filesystem path (crateapp.exporters), not here in the database layer.
+    """
+    if name is None or not name.strip():
+        raise ValueError("crate name cannot be empty")
     con.execute("INSERT OR IGNORE INTO crates (name) VALUES (?)", (name,))
     con.commit()
     return con.execute("SELECT id FROM crates WHERE name=?", (name,)).fetchone()["id"]
