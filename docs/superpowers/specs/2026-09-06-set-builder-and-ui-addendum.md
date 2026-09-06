@@ -50,8 +50,23 @@ No light mode. Every surface is designed once, for black.
 
 ## 2. The live sorting view
 
-While tracks are being analysed and filed, one panel shows the track currently
-being decided. When nothing is being sorted, the panel does not exist.
+One panel shows the track currently being decided. **The panel is always
+present — only its motion is conditional.** It never appears or disappears,
+because a panel that comes and goes makes the whole layout jump each time
+sorting starts or stops.
+
+Two states:
+
+- **Active** — sorting is running. Everything below animates: the curve draws,
+  the bars race, cue markers land, tracks cross-dissolve.
+- **At rest** — nothing to sort. The panel holds the **last track it decided**
+  as a still frame: its finished curve, its crate bars settled, its verdict.
+  Dimmed slightly, motion stopped. Nothing spins, pulses, or idles.
+
+Holding the last result is deliberate: it is informative rather than decorative,
+so a DJ who looks over after a long import sees where it finished instead of an
+empty box. Before anything has ever been sorted, it shows a single quiet line and
+a short invitation to add a folder — the same shape, at rest.
 
 **It shows the real computation, never invented reasoning.** Every number on
 screen is one the classifier actually used:
