@@ -91,3 +91,41 @@ def test_unsorted_excludes_tracks_that_are_not_analysed_yet(con):
     con.execute("INSERT INTO tracks (id, path, analysed_at) VALUES (2, '/b.wav', NULL)")
     con.commit()
     assert 2 not in [r["id"] for r in unsorted(con)]
+
+
+def test_a_move_does_not_destroy_a_deliberate_also_add(con):
+    """A move only corrects the model's own (auto) placement. A separate,
+    deliberate human also-add (e.g. to a personal 'Party' crate) is the DJ's
+    own statement and must survive an unrelated correction."""
+    auto_assign(con, 1, {"crate": "House", "band": "confident", "similarity": 0.9})
+    correct(con, 1, "Party", mode="add", was_error=False)
+    correct(con, 1, "Tech House", mode="move")
+    crates = sorted(r["name"] for r in con.execute(
+        "SELECT c.name FROM assignments a JOIN crates c ON c.id=a.crate_id "
+        "WHERE a.track_id=1"))
+    assert crates == ["Party", "Tech House"]
+
+
+def test_an_also_add_clears_the_track_from_uncertain(con):
+    """Acting on a track - even by also-adding it elsewhere - resolves it.
+    It must not keep reappearing in the review queue, but it must stay filed
+    in the crate it was auto-assigned to."""
+    auto_assign(con, 1, {"crate": "House", "band": "uncertain", "similarity": 0.7})
+    correct(con, 1, "Party", mode="add", was_error=False)
+    assert uncertain(con) == []
+    crates = sorted(r["name"] for r in con.execute(
+        "SELECT c.name FROM assignments a JOIN crates c ON c.id=a.crate_id "
+        "WHERE a.track_id=1"))
+    assert crates == ["House", "Party"]
+
+
+def test_reclassifying_a_track_replaces_the_prior_auto_row(con):
+    """Calling auto_assign twice for the same track (e.g. after a centroid
+    rebuild) must not accumulate stale auto rows - the new verdict replaces
+    the old one."""
+    auto_assign(con, 1, {"crate": "House", "band": "confident", "similarity": 0.9})
+    auto_assign(con, 1, {"crate": "Dubstep", "band": "confident", "similarity": 0.85})
+    rows = con.execute(
+        "SELECT c.name FROM assignments a JOIN crates c ON c.id=a.crate_id "
+        "WHERE a.track_id=1 AND a.source='auto'").fetchall()
+    assert [r["name"] for r in rows] == ["Dubstep"]

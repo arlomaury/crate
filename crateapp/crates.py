@@ -19,8 +19,16 @@ def auto_assign(con, track_id, result):
     merely also surfaced by uncertain() for review. An unknown result
     (crate is None) is filed nowhere: it is left for unsorted() rather than
     forced into a crate the DJ never played.
+
+    Re-classifying a track (e.g. after a model rebuild) must not leave stale
+    auto rows behind: any previous source='auto' assignment for this track is
+    cleared first, so a track re-filed into a different crate ends up with
+    exactly one auto row, not two.
     """
+    con.execute("DELETE FROM assignments WHERE track_id=? AND source='auto'",
+               (track_id,))
     if result.get("crate") is None:
+        con.commit()
         return
     cid = ensure_crate(con, result["crate"])
     con.execute(
@@ -38,11 +46,24 @@ def correct(con, track_id, to_crate, mode="move", was_error=None):
         recorded as an error (was_error=1), regardless of what the caller
         passes for `was_error` - there is no CHECK constraint enforcing this
         in the schema, so the guarantee lives here.
+
+        Only the track's source='auto' assignment is removed. Human
+        assignments (e.g. a deliberate also-add to another crate) are the
+        DJ's own statements and are never destroyed as collateral damage of
+        an unrelated correction - a move to fix the genre must not silently
+        undo a separate, correct also-add.
     mode='add'  - the track additionally joins `to_crate`, keeping its
         existing membership(s). Whether this counts as an error is the DJ's
         own call: "you were right, and it belongs here too" (not an error)
         or "you were wrong, but I'll leave it where it is too" (an error).
         The caller's `was_error` is honoured as-is for adds.
+
+        Acting on a track is acting on it: an also-add resolves any pending
+        review the same way a move does, so it clears the track's auto row
+        out of uncertain() too. It does this by marking the auto row's band
+        'confirmed' rather than deleting it - the track must stay filed in
+        the crate it was auto-assigned to, only the "still needs a look"
+        flag is cleared.
     """
     if mode not in ("move", "add"):
         raise ValueError("mode must be 'move' or 'add'")
@@ -54,8 +75,15 @@ def correct(con, track_id, to_crate, mode="move", was_error=None):
             "SELECT crate_id FROM assignments WHERE track_id=? AND source='auto'",
             (track_id,)).fetchone()
         from_id = row["crate_id"] if row else None
-        con.execute("DELETE FROM assignments WHERE track_id=?", (track_id,))
+        con.execute(
+            "DELETE FROM assignments WHERE track_id=? AND source='auto'",
+            (track_id,))
         was_error = True  # a move is always a correction of a wrong auto placement
+    else:
+        con.execute(
+            "UPDATE assignments SET band='confirmed' "
+            "WHERE track_id=? AND source='auto' AND band='uncertain'",
+            (track_id,))
 
     con.execute(
         "INSERT OR REPLACE INTO assignments "
