@@ -6,7 +6,7 @@ from crateapp.crates import (ensure_crate, auto_assign, correct, uncertain, unso
 @pytest.fixture
 def con(tmp_path):
     c = connect(tmp_path / "l.db")
-    c.execute("INSERT INTO tracks (id, path) VALUES (1, '/a.wav')")
+    c.execute("INSERT INTO tracks (id, path, analysed_at) VALUES (1, '/a.wav', 'now')")
     c.commit()
     return c
 
@@ -83,3 +83,11 @@ def test_move_cannot_be_talked_out_of_being_an_error(con):
     auto_assign(con, 1, {"crate": "House", "band": "confident", "similarity": 0.9})
     correct(con, 1, "Dubstep", mode="move", was_error=False)
     assert con.execute("SELECT was_error FROM corrections").fetchone()["was_error"] == 1
+
+
+def test_unsorted_excludes_tracks_that_are_not_analysed_yet(con):
+    """A freshly scanned track has not been judged yet - it is not 'unsorted',
+    it is simply pending. Otherwise a scan buries the real unknowns."""
+    con.execute("INSERT INTO tracks (id, path, analysed_at) VALUES (2, '/b.wav', NULL)")
+    con.commit()
+    assert 2 not in [r["id"] for r in unsorted(con)]

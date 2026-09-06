@@ -77,9 +77,12 @@ def uncertain(con):
 
 
 def unsorted(con):
-    """Tracks that matched no crate at all - the classifier judged 'unknown'
-    (or the track otherwise has no membership) and it was filed nowhere
-    rather than forced into an existing crate."""
+    """Analysed tracks that matched no crate at all - the classifier reached
+    a verdict of 'unknown' and it was filed nowhere rather than forced into
+    an existing crate. A track that simply hasn't been analysed yet is not
+    unsorted, it is pending - `analysed_at IS NOT NULL` keeps a fresh scan
+    from burying genuine unknowns under everything still waiting its turn."""
     return con.execute(
         "SELECT t.* FROM tracks t LEFT JOIN assignments a ON a.track_id=t.id "
-        "WHERE a.track_id IS NULL AND t.missing=0 ORDER BY t.id").fetchall()
+        "WHERE a.track_id IS NULL AND t.analysed_at IS NOT NULL AND t.missing=0 "
+        "ORDER BY t.id").fetchall()
