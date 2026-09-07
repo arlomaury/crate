@@ -12,6 +12,7 @@ from urllib.parse import unquote, urlsplit
 
 from crateapp import crates as crate_ops
 from crateapp.classifier import rebuild_centroids
+from crateapp.db import LOCK
 from crateapp.exporters import export_folders, export_rekordbox
 from crateapp.scanner import scan
 
@@ -28,7 +29,7 @@ class ApiError(Exception):
         self.code = code
 
 
-def make_app(con, model_path):
+def make_app(con, model_path, runner=None):
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *a):
             pass                                   # keep the terminal readable
@@ -108,10 +109,16 @@ def make_app(con, model_path):
                     return self._send(self._crate(name))
 
                 if path == "/api/review":
-                    return self._send({
-                        "uncertain": self._rows(crate_ops.uncertain(con)),
-                        "unsorted": self._rows(crate_ops.unsorted(con)),
-                    })
+                    with LOCK:
+                        return self._send({
+                            "uncertain": self._rows(crate_ops.uncertain(con)),
+                            "unsorted": self._rows(crate_ops.unsorted(con)),
+                        })
+
+                if path == "/api/progress":
+                    if runner is None:
+                        raise ApiError("no runner configured", code=503)
+                    return self._send(runner.status())
             except ApiError as e:
                 return self._send_error(e)
             except Exception as e:                 # pragma: no cover - safety net
@@ -128,10 +135,14 @@ def make_app(con, model_path):
 
                 if self.path == "/api/scan":
                     folder = self._require(payload, "folder")
-                    return self._send(scan(con, folder))
+                    with LOCK:
+                        return self._send(scan(con, folder))
 
                 if self.path == "/api/export":
                     return self._send(self._export(payload))
+
+                if self.path == "/api/start":
+                    return self._send(self._start(payload))
             except ApiError as e:
                 return self._send_error(e)
             except Exception as e:                 # pragma: no cover - safety net
@@ -142,62 +153,85 @@ def make_app(con, model_path):
         # -- handlers --------------------------------------------------
 
         def _state(self):
-            rows = con.execute(
-                "SELECT c.name, count(a.track_id) n FROM crates c "
-                "LEFT JOIN assignments a ON a.crate_id=c.id "
-                "GROUP BY c.id ORDER BY c.name").fetchall()
-            return {
-                "crates": [{"name": r["name"], "count": r["n"]} for r in rows],
-                "uncertain": len(crate_ops.uncertain(con)),
-                "unsorted": len(crate_ops.unsorted(con)),
-            }
+            with LOCK:
+                rows = con.execute(
+                    "SELECT c.name, count(a.track_id) n FROM crates c "
+                    "LEFT JOIN assignments a ON a.crate_id=c.id "
+                    "GROUP BY c.id ORDER BY c.name").fetchall()
+                return {
+                    "crates": [{"name": r["name"], "count": r["n"]} for r in rows],
+                    "uncertain": len(crate_ops.uncertain(con)),
+                    "unsorted": len(crate_ops.unsorted(con)),
+                }
 
         def _crate(self, name):
-            rows = con.execute(
-                "SELECT t.* FROM tracks t JOIN assignments a ON a.track_id=t.id "
-                "JOIN crates c ON c.id=a.crate_id WHERE c.name=? ORDER BY t.id",
-                (name,)).fetchall()
-            return {"tracks": self._rows(rows)}
+            with LOCK:
+                rows = con.execute(
+                    "SELECT t.* FROM tracks t JOIN assignments a ON a.track_id=t.id "
+                    "JOIN crates c ON c.id=a.crate_id WHERE c.name=? ORDER BY t.id",
+                    (name,)).fetchall()
+                return {"tracks": self._rows(rows)}
 
         def _correct(self, payload):
             track_id = self._require(payload, "track_id")
             to_crate = self._require(payload, "to_crate")
             mode = payload.get("mode", "move")
             was_error = payload.get("was_error")
-            try:
-                crate_ops.correct(con, track_id, to_crate, mode=mode,
-                                  was_error=was_error)
-            except ValueError as e:
-                # Empty/whitespace crate name (crates.ensure_crate) or a bad
-                # mode value (crates.correct) - both are the caller's fault,
-                # not a server error.
-                raise ApiError(str(e))
-            # Corrections are the only thing that changes crate membership,
-            # so this is the one place the model needs to learn again.
-            # Classifier has no reload(): the cheap, correct move is to
-            # rebuild the centroid file and let the next classify() call
-            # construct a fresh Classifier(model_path) from it.
-            rebuild_centroids(con, model_path)
+            with LOCK:
+                try:
+                    crate_ops.correct(con, track_id, to_crate, mode=mode,
+                                      was_error=was_error)
+                except ValueError as e:
+                    # Empty/whitespace crate name (crates.ensure_crate) or a
+                    # bad mode value (crates.correct) - both are the caller's
+                    # fault, not a server error.
+                    raise ApiError(str(e))
+                # Corrections are the only thing that changes crate
+                # membership, so this is the one place the model needs to
+                # learn again. Classifier has no reload(): the cheap, correct
+                # move is to rebuild the centroid file and let the next
+                # classify() call construct a fresh Classifier(model_path)
+                # from it.
+                rebuild_centroids(con, model_path)
             return {"ok": True}
 
         def _export(self, payload):
             dest = self._require(payload, "dest")
             kind = payload.get("kind", "folders")
-            if kind == "folders":
-                return {"exported": export_folders(con, dest)}
-            if kind == "rekordbox":
-                # export_rekordbox does not create its parent directory
-                # (unlike export_folders, which does) - do it here or a
-                # nested destination path raises FileNotFoundError.
-                Path(dest).resolve().parent.mkdir(parents=True, exist_ok=True)
-                return {"exported": export_rekordbox(con, dest)}
+            with LOCK:
+                if kind == "folders":
+                    return {"exported": export_folders(con, dest)}
+                if kind == "rekordbox":
+                    # export_rekordbox does not create its parent directory
+                    # (unlike export_folders, which does) - do it here or a
+                    # nested destination path raises FileNotFoundError.
+                    Path(dest).resolve().parent.mkdir(parents=True, exist_ok=True)
+                    return {"exported": export_rekordbox(con, dest)}
             raise ApiError(f"unknown export kind: {kind!r}")
+
+        def _start(self, payload):
+            if runner is None:
+                raise ApiError("no runner configured", code=503)
+            folders = payload.get("folders")
+            with LOCK:
+                if folders:
+                    con.execute(
+                        "INSERT OR REPLACE INTO config (key, value) VALUES "
+                        "('folders', ?)", (json.dumps(folders),))
+                    con.commit()
+                else:
+                    row = con.execute(
+                        "SELECT value FROM config WHERE key='folders'").fetchone()
+                    folders = json.loads(row["value"]) if row else []
+            if not folders:
+                raise ApiError("no folders configured to scan")
+            return {"started": runner.start(folders)}
 
     return Handler
 
 
-def serve(con, model_path, port=8420):
-    srv = HTTPServer(("127.0.0.1", port), make_app(con, model_path))
+def serve(con, model_path, port=8420, runner=None):
+    srv = HTTPServer(("127.0.0.1", port), make_app(con, model_path, runner=runner))
     print(f"Crate running at http://127.0.0.1:{port}")
     try:
         srv.serve_forever()

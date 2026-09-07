@@ -1,6 +1,16 @@
 """SQLite catalogue. The database is the product: crates are rows, not folders."""
 import sqlite3
+import threading
 from pathlib import Path
+
+# Shared by crateapp.server (the HTTP request thread) and crateapp.runner
+# (the background analysis/classification thread) around every access to the
+# one sqlite3 connection this module hands out. check_same_thread=False below
+# only lifts sqlite3's own same-thread check - it does not make the
+# connection safe for concurrent use from two threads, which is exactly what
+# a run in progress plus an incoming request now is. Acquire this per unit of
+# work (one query, one track's writes), never for a whole request or run.
+LOCK = threading.RLock()
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS tracks (
