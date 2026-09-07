@@ -50,19 +50,25 @@ def auto_assign(con, track_id, result):
 def correct(con, track_id, to_crate, mode="move", was_error=None):
     """Apply a human decision about a track's crate membership.
 
-    mode='move' - the track leaves its current (auto) crate for `to_crate`.
-        The model's original placement was therefore wrong: this is ALWAYS
-        recorded as an error (was_error=1), regardless of what the caller
-        passes for `was_error` - there is no CHECK constraint enforcing this
-        in the schema, so the guarantee lives here.
+    mode='move' - the track leaves its current primary crate (its 'auto'
+        assignment, or a previous move's 'human' assignment - see below) for
+        `to_crate`. The model's original placement was therefore wrong: this
+        is ALWAYS recorded as an error (was_error=1), regardless of what the
+        caller passes for `was_error` - there is no CHECK constraint
+        enforcing this in the schema, so the guarantee lives here.
 
-        Only the track's source='auto' assignment is removed. Human
-        assignments (e.g. a deliberate also-add to another crate) are the
-        DJ's own statements and are never destroyed as collateral damage of
+        A move clears the track's previous *primary* placement, which is
+        either its source='auto' row, or a source='human' row left by an
+        earlier move (band='confident' - the same band a move has always
+        written). A second move must replace the first, not pile up next to
+        it, or a track corrected twice ends up filed in both crates at once.
+        Deliberate also-adds (mode='add', band='added') are the DJ's own,
+        separate statements and are never destroyed as collateral damage of
         an unrelated correction - a move to fix the genre must not silently
         undo a separate, correct also-add.
     mode='add'  - the track additionally joins `to_crate`, keeping its
-        existing membership(s). Whether this counts as an error is the DJ's
+        existing membership(s), recorded with band='added' so a later move
+        knows not to remove it. Whether this counts as an error is the DJ's
         own call: "you were right, and it belongs here too" (not an error)
         or "you were wrong, but I'll leave it where it is too" (an error).
         The caller's `was_error` is honoured as-is for adds.
@@ -80,24 +86,27 @@ def correct(con, track_id, to_crate, mode="move", was_error=None):
 
     from_id = None
     if mode == "move":
+        primary = ("source='auto' OR (source='human' AND band='confident')")
         row = con.execute(
-            "SELECT crate_id FROM assignments WHERE track_id=? AND source='auto'",
+            f"SELECT crate_id FROM assignments WHERE track_id=? AND ({primary})",
             (track_id,)).fetchone()
         from_id = row["crate_id"] if row else None
         con.execute(
-            "DELETE FROM assignments WHERE track_id=? AND source='auto'",
+            f"DELETE FROM assignments WHERE track_id=? AND ({primary})",
             (track_id,))
         was_error = True  # a move is always a correction of a wrong auto placement
+        band = "confident"
     else:
         con.execute(
             "UPDATE assignments SET band='confirmed' "
             "WHERE track_id=? AND source='auto' AND band='uncertain'",
             (track_id,))
+        band = "added"
 
     con.execute(
         "INSERT OR REPLACE INTO assignments "
         "(track_id, crate_id, source, confidence, band) "
-        "VALUES (?,?,'human',1.0,'confident')", (track_id, to_id))
+        "VALUES (?,?,'human',1.0,?)", (track_id, to_id, band))
     con.execute(
         "INSERT INTO corrections (track_id, from_crate, to_crate, was_error) "
         "VALUES (?,?,?,?)", (track_id, from_id, to_id, 1 if was_error else 0))

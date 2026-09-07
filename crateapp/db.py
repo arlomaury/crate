@@ -58,7 +58,14 @@ def connect(path):
     """Open the catalogue, creating it if needed."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    con = sqlite3.connect(str(path))
+    # check_same_thread=False: the connection this returns is handed to the
+    # HTTP server (crateapp.server), whose request-handling thread is not
+    # the thread that called connect(). Access from that one server thread
+    # is still effectively serial (HTTPServer handles one request at a
+    # time), so this does not introduce concurrent use of the connection -
+    # it only lifts sqlite3's same-thread check so a single-threaded HTTP
+    # server can be handed a connection built during setup.
+    con = sqlite3.connect(str(path), check_same_thread=False)
     con.row_factory = sqlite3.Row
     con.execute("PRAGMA foreign_keys = ON")
     con.executescript(SCHEMA)
