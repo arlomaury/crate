@@ -46,9 +46,10 @@ PY
 SERVER_PID=$!
 
 # Wait for it to answer rather than guessing at a sleep duration.
-for _ in $(seq 1 40); do
+# essentia + TensorFlow take ~20s to import on a cold start.
+for _ in $(seq 1 240); do
   if curl -fs "$URL/api/state" >/dev/null 2>&1; then break; fi
-  sleep 0.25
+  sleep 0.5
 done
 
 if ! curl -fs "$URL/api/state" >/dev/null 2>&1; then
