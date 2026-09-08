@@ -22,18 +22,18 @@ def setup(tmp_path, monkeypatch):
 
     import crateapp.runner as runner_mod
 
-    def fake_analyse_one(con, gm, row):
-        vec = a if row["filename"] == "a.wav" else b
-        from crateapp.worker import store_result
-        store_result(con, row["id"],
-                     {"bpm": 128.0, "camelot": "8A", "duration_sec": 100,
-                      "category": "House",
-                      "structure": {"energy_curve": [0.1, 0.9, 0.5]},
-                      "moments": [], "vocal_analysis": {}, "genre_predictions": []},
-                     vec)
-        return True
+    def fake_analyse_track(gm, path):
+        """Stands in for the real analysis: returns (result, embedding) and
+        touches no database, matching analyse_track's contract."""
+        from pathlib import Path as _P
+        vec = a if _P(path).name == "a.wav" else b
+        return ({"bpm": 128.0, "camelot": "8A", "duration_sec": 100,
+                 "category": "House",
+                 "structure": {"energy_curve": [0.1, 0.9, 0.5]},
+                 "moments": [], "vocal_analysis": {}, "genre_predictions": []},
+                vec)
 
-    monkeypatch.setattr(runner_mod, "analyse_one", fake_analyse_one)
+    monkeypatch.setattr(runner_mod, "analyse_track", fake_analyse_track)
     monkeypatch.setattr(runner_mod, "load_genre_model", lambda d: None)
     return tmp_path, music, model
 

@@ -42,8 +42,14 @@ def load_embedding(con, track_id):
     return np.frombuffer(row["vector"], dtype=np.float32).copy()
 
 
-def analyse_one(con, gm, row):
-    """Analyse a single track row. Returns True if it produced usable output.
+def analyse_track(gm, path):
+    """Analyse one file and return `(result, embedding)`. Touches no database.
+
+    Split out from `analyse_one` on purpose. This is the expensive part -
+    measured at 4.3s per track - and the runner must NOT hold the database
+    lock across it. Holding the lock here made a 1000-track import lock the
+    database for roughly 71 minutes of wall clock, so every click in the UI
+    waited up to 4.3s while the panel kept animating and looked responsive.
 
     Reads back the embedding analyze.analyse() already wrote to `emb_dir`
     instead of decoding the audio and running the model a second time -
@@ -51,13 +57,23 @@ def analyse_one(con, gm, row):
     """
     with tempfile.TemporaryDirectory() as tmp:
         try:
-            result = analyze.analyse(row["path"], gm, verbose=False, emb_dir=tmp)
+            result = analyze.analyse(path, gm, verbose=False, emb_dir=tmp)
         except Exception as e:
-            store_result(con, row["id"], {"errors": [str(e)]}, None)
-            return False
+            return {"errors": [str(e)]}, None
         emb = None
-        f = analyze.embedding_path(tmp, row["path"])
+        f = analyze.embedding_path(tmp, path)
         if f.exists():
             emb = np.load(f)
+    return result, emb
+
+
+def analyse_one(con, gm, row):
+    """Analyse a track and store the result. Returns True on usable output.
+
+    Convenience wrapper for callers that are not holding a lock. The runner
+    uses `analyse_track` plus `store_result` separately so that only the
+    write is serialised.
+    """
+    result, emb = analyse_track(gm, row["path"])
     store_result(con, row["id"], result, emb)
     return not result.get("errors")

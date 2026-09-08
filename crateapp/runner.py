@@ -26,7 +26,7 @@ from crateapp.classifier import Classifier
 from crateapp.crates import auto_assign
 from crateapp.db import LOCK, connect
 from crateapp.scanner import pending, scan
-from crateapp.worker import analyse_one, load_embedding
+from crateapp.worker import analyse_one, analyse_track, load_embedding, store_result
 
 
 def load_genre_model(models_dir):
@@ -138,8 +138,16 @@ class Runner:
         classifier is available, classify and file it. Returns the `current`
         status dict for this track (never None - callers treat an exception
         escaping this method, not a None return, as the failure signal)."""
+        # The audio analysis runs OUTSIDE the lock. It takes ~4.3s per track;
+        # holding the lock across it meant a 1000-track import serialised the
+        # database for over an hour, so every UI click waited seconds while
+        # the progress panel kept animating and looked fine. Only the write
+        # and the reads that follow need to be serialised.
+        result, emb = analyse_track(gm, row["path"])
+        ok = not result.get("errors")
+
         with LOCK:
-            ok = analyse_one(con, gm, row)
+            store_result(con, row["id"], result, emb)
             trow = con.execute(
                 "SELECT * FROM tracks WHERE id=?", (row["id"],)).fetchone()
             arow = con.execute(
