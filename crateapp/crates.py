@@ -117,8 +117,13 @@ def uncertain(con):
     """Tracks filed provisionally by the classifier and still awaiting a
     human verdict. They are real, browsable/exportable members of their
     crate - this is a view over that provisional state, not a holding pen."""
+    # Carries the crate it was filed into, so the UI can default its picker to
+    # where the track actually is. Defaulting to the alphabetically-first crate
+    # made "Move" silently misfile anything the DJ did not manually re-pick.
     return con.execute(
-        "SELECT t.* FROM tracks t JOIN assignments a ON a.track_id=t.id "
+        "SELECT t.*, c.name AS crate FROM tracks t "
+        "JOIN assignments a ON a.track_id=t.id "
+        "JOIN crates c ON c.id=a.crate_id "
         "WHERE a.band='uncertain' AND a.source='auto' ORDER BY t.id").fetchall()
 
 
