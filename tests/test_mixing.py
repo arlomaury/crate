@@ -182,3 +182,50 @@ def test_mix_points_cope_with_no_structure():
     """A track with nothing detected still needs a usable answer."""
     p = mix_points([], 300.0, [])
     assert p["out_at"] is not None and p["in_at"] is not None
+
+
+def test_the_lead_in_is_bars_not_seconds():
+    """16 bars is 30s at 128 BPM and 22s at 175. A DJ counts the phrase, so
+    the lead-in has to follow tempo rather than sit at a fixed number."""
+    b = [{"type": "drop", "time": 120.0}]
+    slow = mix_points([], 300.0, b, bpm_a=128.0)["in_at"]
+    fast = mix_points([], 300.0, b, bpm_a=175.0)["in_at"]
+    assert slow == round(120.0 - 30.0, 2)
+    assert fast > slow          # less real time in 16 bars, so come in later
+
+
+def test_a_track_that_drops_immediately_says_so():
+    """Plenty of edits drop in the first bar. That is not a narrow window to
+    aim at, it is no window, and the answer should say that."""
+    p = mix_points([], 300.0, [{"type": "drop", "time": 0.4}], bpm_a=128.0)
+    assert "no intro" in p["in_note"]
+    assert p["in_at"] == 0.0
+
+
+def test_a_short_intro_is_flagged_with_its_length():
+    p = mix_points([], 300.0, [{"type": "drop", "time": 16.0}], bpm_a=128.0)
+    assert "short intro" in p["in_note"] and "16s" in p["in_note"]
+
+
+def test_a_main_section_at_bar_zero_is_not_the_mix_in_target():
+    """Nearly every analysed track carries a 'main section' marker in its
+    first bar - it means 'the track starts', not 'land here'. Taking it as
+    the target made every mix-in read 'no intro' while the real drop sat
+    forty bars later. Measured on the library: 88% of tracks looked
+    intro-less because of this."""
+    b = [{"type": "main section", "bar": 0, "time": 0.4},
+         {"type": "drop", "bar": 40, "time": 73.7}]
+    p = mix_points([], 300.0, b, bpm_a=132.0)
+    assert p["in_window"][1] == 73.7
+    assert p["in_at"] > 0.0
+    assert p["in_note"] == ""
+
+
+def test_a_late_main_section_still_works_when_there_is_no_drop():
+    b = [{"type": "main section", "bar": 16, "time": 30.0}]
+    assert mix_points([], 300.0, b, bpm_a=128.0)["in_window"][1] == 30.0
+
+
+def test_a_roomy_intro_needs_no_warning():
+    p = mix_points([], 300.0, [{"type": "drop", "time": 90.0}], bpm_a=128.0)
+    assert p["in_note"] == ""

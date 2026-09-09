@@ -57,6 +57,9 @@ def test_crate_names_are_listed(model):
 
 
 def test_the_real_shipped_model_loads():
+    """The shipped model's crate names ARE the app's crate names - a mismatch
+    means classify() files tracks into crates the UI never shows. These are
+    the DJ's own folder names, not display labels of our choosing."""
     c = Classifier("crate_model.json")
-    assert "House" in c.crate_names()
-    assert len(c.crate_names()) == 7
+    assert sorted(c.crate_names()) == [
+        "DUBSTEP", "UKG", "afro", "house", "pop", "rap", "tech", "vocals"]

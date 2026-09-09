@@ -190,6 +190,13 @@ def score_transition(a, b, mode="balanced", want="steady"):
     }
 
 
+def bars_to_seconds(bars, bpm):
+    """Bars are the unit that matters; seconds are what a player displays."""
+    if not bpm:
+        return None
+    return bars * 4 * 60.0 / bpm
+
+
 def mix_points(moments_a, dur_a, moments_b, bpm_a=None):
     """Where to mix out of A and into B: an exact point AND the window it sits in.
 
@@ -199,6 +206,15 @@ def mix_points(moments_a, dur_a, moments_b, bpm_a=None):
 
     Windows come from real structure: the outro window runs from the last
     energy fall to the end, the intro window from the start to the first drop.
+
+    The lead-in is 16 bars, not a fixed number of seconds - at 128 BPM that is
+    30s and at 175 it is 22s, and the phrase is what the DJ is counting. It is
+    measured at A's tempo because the incoming record is pitched to match the
+    deck already playing.
+
+    Plenty of edits and bootlegs drop within the first bar. That is not a
+    narrow window to aim at, it is no window at all, and saying so is more
+    use than returning a range of a third of a second.
     """
     def last_of(ms, kinds):
         hits = [m for m in ms if m.get("type") in kinds]
@@ -210,6 +226,9 @@ def mix_points(moments_a, dur_a, moments_b, bpm_a=None):
                 return m
         return None
 
+    lead_in = bars_to_seconds(16, bpm_a) or 32.0
+    min_room = bars_to_seconds(4, bpm_a) or 8.0
+
     out_from, out_to, out_at = None, dur_a, None
     tail = last_of(moments_a or [], {"outro", "breakdown"})
     if tail:
@@ -219,15 +238,27 @@ def mix_points(moments_a, dur_a, moments_b, bpm_a=None):
         out_from = max(0.0, dur_a * 0.75)
         out_at = out_from
 
-    in_from, in_to, in_at = 0.0, None, None
-    head = first_of(moments_b or [], {"drop", "main section"})
+    in_from, in_to, in_at, in_note = 0.0, None, None, ""
+    # The target is the first DROP. A "main section" marker sitting at bar 0
+    # only means "the track starts" - almost every track has one, and treating
+    # it as the landing point makes every mix-in look like it has no intro
+    # while the real drop sits 16 or 40 bars later.
+    head = first_of(moments_b or [], {"drop"})
+    if head is None:
+        head = next((m for m in (moments_b or [])
+                     if m.get("type") == "main section" and (m.get("bar") or 0) >= 4),
+                    None)
     if head:
         in_to = head["time"]
-        # Come in early enough to have a bar or two before the drop lands.
-        in_at = max(0.0, head["time"] - 32.0)
+        in_at = max(0.0, head["time"] - lead_in)
+        if in_to < min_room:
+            in_note = "no intro - drop it on the one"
+        elif in_to < lead_in:
+            in_note = f"short intro - only {in_to:.0f}s before the drop"
     else:
-        in_to = 32.0
+        in_to = lead_in
         in_at = 0.0
+        in_note = "no drop detected - mix in from the top"
 
     return {
         "out_at": None if out_at is None else round(out_at, 2),
@@ -235,4 +266,6 @@ def mix_points(moments_a, dur_a, moments_b, bpm_a=None):
                        None if out_to is None else round(out_to, 2)],
         "in_at": None if in_at is None else round(in_at, 2),
         "in_window": [round(in_from, 2), None if in_to is None else round(in_to, 2)],
+        "in_note": in_note,
+        "lead_in_bars": 16,
     }
