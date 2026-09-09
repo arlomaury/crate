@@ -405,16 +405,13 @@ def make_app(con, model_path, runner=None):
                     clf = None
                 if clf is not None and clf.crate_names():
                     v = np.frombuffer(emb["vector"], dtype=np.float32).copy()
-                    v = v / (np.linalg.norm(v) + 1e-9)
-                    sims = clf.centroids @ v
-                    out["similarities"] = sorted(
-                        [{"crate": n, "similarity": float(s)}
-                         for n, s in zip(clf.names, sims)],
-                        key=lambda d: -d["similarity"])
-                    if len(out["similarities"]) > 1:
-                        out["margin"] = round(
-                            out["similarities"][0]["similarity"]
-                            - out["similarities"][1]["similarity"], 4)
+                    r = clf.classify(v)
+                    out["similarities"] = [
+                        {"crate": s["crate"], "similarity": s["p"]}
+                        for s in r["scores"]]
+                    out["margin"] = r["margin"]
+                    out["model_pick"] = r["crate"]
+                    out["model_band"] = r["band"]
             return out
 
         def _preview(self, raw_id):

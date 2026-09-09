@@ -175,17 +175,12 @@ class Runner:
 
         result = classifier.classify(vec)
 
-        # Per-crate similarities, for the panel's coin-flip view. This is the
-        # exact same normalise-and-dot-product classify() runs internally
-        # (classifier.centroids is already unit-normalised) - not a separate
-        # invented number, just the full vector classify() only summarises.
-        v = np.asarray(vec, dtype=np.float32)
-        v = v / (np.linalg.norm(v) + 1e-9)
-        sims = classifier.centroids @ v
-        current["similarities"] = sorted(
-            [{"crate": name, "similarity": float(s)}
-             for name, s in zip(classifier.names, sims)],
-            key=lambda d: -d["similarity"])
+        # The panel shows the numbers the decision was actually made on, taken
+        # straight from classify(). Recomputing a separate score here is how
+        # the panel ended up displaying cosine similarities beside a verdict
+        # reached some other way.
+        current["similarities"] = [{"crate": s["crate"], "similarity": s["p"]}
+                                   for s in result["scores"]]
         current["crate"] = result["crate"]
         current["band"] = result["band"]
         current["margin"] = result["margin"]
