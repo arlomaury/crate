@@ -617,3 +617,86 @@ button.ghost:hover { color: var(--ink); border-color: var(--accent-dim); }
 .preview-btn:disabled { opacity: .4; cursor: default; }
 .ni-acts { display: flex; gap: 8px; align-items: center; }
 .ni-acts .preview-btn { margin-left: 0; }
+
+/* ------------------------------------------------- player & clickable rows */
+
+/* Clicking a track is the primary gesture in the app now, so it has to look
+   like one. */
+.clickable { cursor: pointer; }
+.track-row.clickable:hover,
+.review-row.clickable:hover { background: var(--bg-3); }
+.set-track.clickable:hover,
+.next-item.clickable:hover { border-color: var(--line-2); background: var(--bg-2); }
+
+/* The track on the deck, marked everywhere it appears. */
+.is-playing { position: relative; }
+.is-playing::before {
+  content: "";
+  position: absolute;
+  left: 0; top: 3px; bottom: 3px;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+.track-row.is-playing .t-name,
+.review-row.is-playing .r-name,
+.set-track.is-playing .st-name,
+.next-item.is-playing .ni-name { color: var(--accent); }
+
+button.sp-play {
+  margin-left: 10px;
+  padding: 2px 12px;
+  border-radius: 999px;
+  background: var(--bg-3);
+  border: 1px solid var(--line-2);
+  color: var(--ink);
+}
+button.sp-play:hover:not(:disabled) { border-color: var(--accent-dim); }
+button.sp-play:disabled { opacity: .35; cursor: default; }
+
+.sp-clock { margin-left: 8px; color: var(--ink-3); font-size: 11px; }
+
+/* The waveform is click-to-seek, so say so with the cursor. */
+.sp-canvas { cursor: crosshair; }
+
+/* The error banner used to sit in the flex column, so showing it shoved the
+   whole app down by its height and pulled it back up 6 seconds later. It
+   floats now: it still can't be missed, but nothing moves under the pointer. */
+.error-banner {
+  position: fixed;
+  left: 50%; top: 10px;
+  transform: translateX(-50%);
+  z-index: 40;
+  max-width: min(680px, 92vw);
+  padding: 8px 16px;
+  border: 1px solid rgba(176,104,104,0.4);
+  border-radius: 8px;
+  background: rgba(46,22,22,0.96);
+  color: #e9c4c4;
+  box-shadow: 0 10px 30px rgba(0,0,0,.5);
+}
+
+/* The panel's two verdict lines: where it is filed, and what the model
+   thinks now. Deliberately distinct rows - as one line they read as a
+   single claim, which they are not. */
+.sp-verdict { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.sp-verdict-model {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+  margin-top: 5px; font-size: 11px; color: var(--ink-2);
+}
+.v-key {
+  font-size: 10px; text-transform: uppercase; letter-spacing: .06em;
+  color: var(--ink-3);
+}
+.sp-verdict .crate {
+  padding: 1px 8px; border-radius: 999px;
+  background: var(--bg-3); border: 1px solid var(--line-2);
+  color: var(--ink); font-weight: 550;
+}
+.sp-verdict .crate.by-hand { border-color: var(--accent-dim); color: var(--accent); }
+.v-num { color: var(--ink-3); }
+.v-disagree {
+  padding: 0 6px; border-radius: 4px;
+  background: rgba(211,160,78,.14); color: var(--uncertain);
+  font-size: 10px; text-transform: uppercase; letter-spacing: .05em;
+}

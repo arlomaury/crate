@@ -273,3 +273,116 @@ def test_a_long_request_does_not_block_other_requests(audio_base):
     assert time.time() - t0 < 2.0
     for th in threads:
         th.join()
+
+
+# --------------------------------------------------------- full playback
+
+def test_audio_serves_the_whole_track_seekably(audio_base):
+    """Any song, any time - so it must be a full, seekable response."""
+    with urllib.request.urlopen(audio_base + "/api/audio/1") as r:
+        assert r.status == 200
+        assert r.headers["Accept-Ranges"] == "bytes"
+        assert r.headers["Content-Type"] == "audio/wav"
+        assert len(r.read()) == int(r.headers["Content-Length"])
+
+
+def test_audio_honours_a_range_request(audio_base):
+    """Without 206 the browser refuses to seek and refetches the whole file."""
+    req = urllib.request.Request(audio_base + "/api/audio/1",
+                                 headers={"Range": "bytes=100-199"})
+    with urllib.request.urlopen(req) as r:
+        assert r.status == 206
+        assert r.headers["Content-Length"] == "100"
+        assert "/" in r.headers["Content-Range"]
+        assert len(r.read()) == 100
+
+
+def test_a_suffix_range_returns_the_tail(audio_base):
+    req = urllib.request.Request(audio_base + "/api/audio/1",
+                                 headers={"Range": "bytes=-50"})
+    with urllib.request.urlopen(req) as r:
+        assert len(r.read()) == 50
+
+
+def test_a_range_past_the_end_is_416(audio_base):
+    req = urllib.request.Request(audio_base + "/api/audio/1",
+                                 headers={"Range": "bytes=99999999-"})
+    with pytest.raises(urllib.error.HTTPError) as e:
+        urllib.request.urlopen(req)
+    assert e.value.code == 416
+
+
+def test_audio_is_addressed_by_id_never_by_path(audio_base):
+    for bad in ["/etc/passwd", "../../../../etc/passwd", "abc"]:
+        with pytest.raises(urllib.error.HTTPError) as e:
+            urllib.request.urlopen(
+                audio_base + "/api/audio/" + urllib.parse.quote(bad, safe=""))
+        assert e.value.code in (400, 404)
+
+
+def test_audio_404s_when_the_file_vanished(audio_base):
+    with pytest.raises(urllib.error.HTTPError) as e:
+        urllib.request.urlopen(audio_base + "/api/audio/2")
+    assert e.value.code == 404
+
+
+# ------------------------------------------------------------ track detail
+
+def test_track_detail_carries_what_the_panel_draws(audio_base):
+    t = get(audio_base + "/api/track/1")
+    for k in ("id", "filename", "bpm", "camelot", "duration", "energy",
+              "moments", "similarities", "crate", "band", "analysed"):
+        assert k in t, f"track detail is missing {k}"
+
+
+def test_track_detail_says_when_a_track_was_never_analysed(audio_base):
+    """The panel must not imply an empty curve is a flat track."""
+    t = get(audio_base + "/api/track/1")
+    assert t["analysed"] is False
+    assert t["energy"] == [] and t["moments"] == []
+
+
+def test_track_detail_404s_for_an_unknown_track(audio_base):
+    with pytest.raises(urllib.error.HTTPError) as e:
+        urllib.request.urlopen(audio_base + "/api/track/9999")
+    assert e.value.code == 404
+
+
+def test_track_detail_matches_the_shape_the_runner_reports(sets_base):
+    """The panel has one renderer for the live run and for a clicked track,
+    so the two payloads must agree on field names."""
+    t = get(sets_base + "/api/track/1")
+    assert set(("filename", "bpm", "camelot", "energy", "similarities",
+                "crate", "band")) <= set(t)
+    assert t["analysed"] is True
+    assert t["moments"] and t["energy"]
+
+
+def test_track_detail_reports_every_crate_it_is_in(audio_base):
+    """A track filed by hand in one crate and by the model in another is the
+    interesting case. Returning one arbitrary row hid it - and pinned the
+    model's margin to whichever crate happened to come back first."""
+    t = get(audio_base + "/api/track/1")
+    assert "crates" in t and isinstance(t["crates"], list)
+
+
+def test_crates_puts_the_djs_own_call_first(tmp_path):
+    """When the DJ and the model disagree, the DJ's call leads."""
+    con = connect(tmp_path / "c.db")
+    con.execute("INSERT INTO tracks (id, path, filename, analysed_at) "
+                "VALUES (1, '/x.wav', 'x.wav', 'now')")
+    for name, source in (("house", "auto"), ("tech", "human")):
+        con.execute("INSERT OR IGNORE INTO crates (name) VALUES (?)", (name,))
+        cid = con.execute("SELECT id FROM crates WHERE name=?",
+                          (name,)).fetchone()["id"]
+        con.execute("INSERT INTO assignments (track_id, crate_id, source, band) "
+                    "VALUES (1, ?, ?, 'confident')", (cid, source))
+    con.commit()
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), make_app(con, tmp_path / "m.json"))
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        t = get(f"http://127.0.0.1:{srv.server_port}/api/track/1")
+        assert [c["name"] for c in t["crates"]][0] == "tech"
+        assert len(t["crates"]) == 2
+    finally:
+        srv.shutdown()
