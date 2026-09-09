@@ -6,7 +6,7 @@ from the network. Stdlib only (http.server / json / sqlite3) - no Flask,
 no FastAPI.
 """
 import json
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlsplit
 
@@ -32,6 +32,11 @@ class ApiError(Exception):
 
 def make_app(con, model_path, runner=None):
     class Handler(BaseHTTPRequestHandler):
+        # HTTP/1.1 so the browser gets keep-alive and well-behaved range
+        # requests. Every response below sends an accurate Content-Length,
+        # which 1.1 requires.
+        protocol_version = "HTTP/1.1"
+
         def log_message(self, *a):
             pass                                   # keep the terminal readable
 
@@ -115,6 +120,9 @@ def make_app(con, model_path, runner=None):
                             "uncertain": self._rows(crate_ops.uncertain(con)),
                             "unsorted": self._rows(crate_ops.unsorted(con)),
                         })
+
+                if path.startswith("/api/preview/"):
+                    return self._preview(path[len("/api/preview/"):])
 
                 if path == "/api/setpool":
                     q = parse_qs(urlsplit(self.path).query)
@@ -206,6 +214,88 @@ def make_app(con, model_path, runner=None):
                 rebuild_centroids(con, model_path)
             return {"ok": True}
 
+        # -- audio preview ----------------------------------------------
+        #
+        # A short WAV segment, not the file. Two reasons, both decisive:
+        # browsers cannot decode AIFF at all (verified: EncodingError on
+        # Chrome) and AIFF is 669 of this library's ~1400 files; and shipping
+        # 56MB to audition twenty seconds is absurd when the segment is 1.7MB.
+        # Decoding through essentia - already a dependency, and the thing that
+        # analysed these files in the first place - makes every format the
+        # analyser can read previewable, which is all of them.
+        #
+        # Addressed by track id, never by path: the browser can name a row the
+        # analyser created, not a file to read.
+
+        MAX_PREVIEW_SEC = 45.0
+
+        def _preview(self, raw_id):
+            import io
+            import wave
+
+            import numpy as np
+
+            try:
+                track_id = int(raw_id)
+            except ValueError:
+                raise ApiError("bad track id")
+
+            q = parse_qs(urlsplit(self.path).query)
+            def num(key, default):
+                try:
+                    return float(q.get(key, [default])[0])
+                except (TypeError, ValueError):
+                    raise ApiError(f"{key} must be a number")
+            at = max(0.0, num("at", 0.0))
+            length = min(self.MAX_PREVIEW_SEC, max(0.5, num("len", 20.0)))
+
+            with LOCK:
+                row = con.execute("SELECT path FROM tracks WHERE id=?",
+                                  (track_id,)).fetchone()
+            if row is None:
+                raise ApiError("no such track", code=404)
+            f = Path(row["path"])
+            if not f.is_file():
+                raise ApiError("file is missing from disk", code=404)
+
+            import essentia.standard as es
+            SR = 44100
+            try:
+                audio = es.MonoLoader(filename=str(f), sampleRate=SR)()
+            except Exception as e:
+                raise ApiError(f"could not decode audio: {e}", code=422)
+
+            start = min(int(at * SR), len(audio))
+            stop = min(start + int(length * SR), len(audio))
+            seg = audio[start:stop]
+            if not len(seg):
+                raise ApiError("that position is past the end of the track")
+
+            pcm = np.clip(np.asarray(seg, dtype="float32"), -1.0, 1.0)
+            pcm = (pcm * 32767.0).astype("<i2")
+
+            buf = io.BytesIO()
+            with wave.open(buf, "wb") as w:
+                w.setnchannels(1)
+                w.setsampwidth(2)
+                w.setframerate(SR)
+                w.writeframes(pcm.tobytes())
+            body = buf.getvalue()
+
+            self.send_response(200)
+            self.send_header("Content-Type", "audio/wav")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            if self.command != "HEAD":
+                try:
+                    self.wfile.write(body)
+                except (BrokenPipeError, ConnectionResetError):
+                    pass          # the DJ moved on; not an error
+
+        def do_HEAD(self):
+            return self.do_GET()
+
         # -- set builder ----------------------------------------------
         #
         # The pool is rebuilt per request rather than cached: 60ms at full
@@ -286,7 +376,14 @@ def make_app(con, model_path, runner=None):
 
 
 def serve(con, model_path, port=8420, runner=None):
-    srv = HTTPServer(("127.0.0.1", port), make_app(con, model_path, runner=runner))
+    # Threaded, not the plain single-threaded HTTPServer: streaming a 56MB
+    # WAV for a transition preview would otherwise block every other request
+    # for the length of the download - the UI would freeze the moment the DJ
+    # pressed play. The sqlite connection is shared safely (check_same_thread
+    # is off and every write goes through db.LOCK).
+    srv = ThreadingHTTPServer(("127.0.0.1", port),
+                              make_app(con, model_path, runner=runner))
+    srv.daemon_threads = True
     print(f"Crate running at http://127.0.0.1:{port}")
     try:
         srv.serve_forever()

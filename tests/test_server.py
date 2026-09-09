@@ -4,7 +4,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import pytest
-from http.server import HTTPServer
+from http.server import ThreadingHTTPServer
 from crateapp.db import connect
 from crateapp.crates import correct
 from crateapp.server import make_app
@@ -17,7 +17,7 @@ def base(tmp_path):
                 "VALUES (1, '/a.wav', 'a.wav', 'now', 128.0)")
     con.commit()
     correct(con, 1, "House", mode="move")
-    srv = HTTPServer(("127.0.0.1", 0), make_app(con, tmp_path / "m.json"))
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), make_app(con, tmp_path / "m.json"))
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     yield f"http://127.0.0.1:{srv.server_port}"
     srv.shutdown()
@@ -119,7 +119,7 @@ def sets_base(tmp_path):
         con.execute("INSERT INTO embeddings (track_id, vector) VALUES (?,?)",
                     (i, np.asarray(vec, dtype="float32").tobytes()))
     con.commit()
-    srv = HTTPServer(("127.0.0.1", 0), make_app(con, tmp_path / "m.json"))
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), make_app(con, tmp_path / "m.json"))
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     yield f"http://127.0.0.1:{srv.server_port}"
     srv.shutdown()
@@ -171,3 +171,105 @@ def test_the_set_endpoint_requires_a_seed(sets_base):
     with pytest.raises(urllib.error.HTTPError) as e:
         post(sets_base + "/api/set", {})
     assert e.value.code == 400
+
+
+# ----------------------------------------------------------- audio preview
+
+@pytest.fixture
+def audio_base(tmp_path):
+    """A real, decodable WAV on disk, plus a row whose file is gone."""
+    import wave
+
+    import numpy as np
+    f = tmp_path / "song.wav"
+    sr = 44100
+    t = np.arange(sr * 5) / sr                      # 5 seconds of a 440Hz tone
+    pcm = (np.sin(2 * np.pi * 440 * t) * 20000).astype("<i2")
+    with wave.open(str(f), "wb") as w:
+        w.setnchannels(1); w.setsampwidth(2); w.setframerate(sr)
+        w.writeframes(pcm.tobytes())
+
+    con = connect(tmp_path / "a.db")
+    con.execute("INSERT INTO tracks (id, path, filename) VALUES (1, ?, 'song.wav')",
+                (str(f),))
+    con.execute("INSERT INTO tracks (id, path, filename) VALUES "
+                "(2, '/nope/gone.wav', 'gone.wav')")
+    con.commit()
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), make_app(con, tmp_path / "m.json"))
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    yield f"http://127.0.0.1:{srv.server_port}"
+    srv.shutdown()
+
+
+def _wav_seconds(body):
+    import io
+    import wave
+    with wave.open(io.BytesIO(body), "rb") as w:
+        return w.getnframes() / w.getframerate()
+
+
+def test_preview_returns_a_playable_wav(audio_base):
+    """WAV specifically: browsers cannot decode AIFF, which is most of this
+    library, so the preview must not hand back the source format."""
+    with urllib.request.urlopen(audio_base + "/api/preview/1?at=0&len=2") as r:
+        assert r.headers["Content-Type"] == "audio/wav"
+        assert _wav_seconds(r.read()) == pytest.approx(2.0, abs=0.05)
+
+
+def test_preview_starts_where_it_was_asked_to(audio_base):
+    with urllib.request.urlopen(audio_base + "/api/preview/1?at=4&len=5") as r:
+        # Only one second of track remains after 4s; it returns what exists.
+        assert _wav_seconds(r.read()) == pytest.approx(1.0, abs=0.05)
+
+
+def test_preview_length_is_capped(audio_base):
+    """An unbounded len is a request to buffer the whole library into RAM."""
+    with urllib.request.urlopen(audio_base + "/api/preview/1?at=0&len=99999") as r:
+        assert _wav_seconds(r.read()) <= 45.0
+
+
+def test_a_position_past_the_end_is_a_clean_error(audio_base):
+    with pytest.raises(urllib.error.HTTPError) as e:
+        urllib.request.urlopen(audio_base + "/api/preview/1?at=600&len=5")
+    assert e.value.code == 400
+
+
+def test_preview_is_addressed_by_id_never_by_path(audio_base):
+    """The browser can name a row the analyser created, not a file to read."""
+    for bad in ["/etc/passwd", "../../../../etc/passwd", "abc"]:
+        with pytest.raises(urllib.error.HTTPError) as e:
+            urllib.request.urlopen(
+                audio_base + "/api/preview/" + urllib.parse.quote(bad, safe=""))
+        assert e.value.code in (400, 404)
+
+
+def test_a_track_whose_file_vanished_is_404_not_500(audio_base):
+    with pytest.raises(urllib.error.HTTPError) as e:
+        urllib.request.urlopen(audio_base + "/api/preview/2")
+    assert e.value.code == 404
+
+
+def test_a_bad_number_is_rejected_cleanly(audio_base):
+    with pytest.raises(urllib.error.HTTPError) as e:
+        urllib.request.urlopen(audio_base + "/api/preview/1?at=banana")
+    assert e.value.code == 400
+
+
+def test_a_long_request_does_not_block_other_requests(audio_base):
+    """Decoding and previewing must not freeze the UI. On the single-threaded
+    HTTPServer every poll queued behind the work."""
+    import time
+    threads, slow = [], []
+
+    def hit():
+        t0 = time.time()
+        urllib.request.urlopen(audio_base + "/api/preview/1?at=0&len=45").read()
+        slow.append(time.time() - t0)
+
+    for _ in range(3):
+        th = threading.Thread(target=hit); th.start(); threads.append(th)
+    t0 = time.time()
+    get(audio_base + "/api/state")
+    assert time.time() - t0 < 2.0
+    for th in threads:
+        th.join()

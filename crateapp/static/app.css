@@ -612,3 +612,8 @@ button.ghost:hover { color: var(--ink); border-color: var(--accent-dim); }
   .set-field input[type="text"] { width: 200px; }
   .set-actions { margin-left: 0; }
 }
+
+.preview-btn { margin-left: auto; }
+.preview-btn:disabled { opacity: .4; cursor: default; }
+.ni-acts { display: flex; gap: 8px; align-items: center; }
+.ni-acts .preview-btn { margin-left: 0; }

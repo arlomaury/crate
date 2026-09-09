@@ -137,9 +137,15 @@ def _public(t):
 
 
 def _step(a, b, mode, arc):
-    """Score, explain and place one transition from `a` into `b`."""
+    """Score, explain and place one transition from `a` into `b`.
+
+    Carries both track ids so the caller can audition the transition without
+    having to work out which two rows it joined.
+    """
     r = score_transition(a, b, mode=mode, want=arc)
     r["mix"] = mix_points(a["moments"], a["duration"], b["moments"], a["bpm"])
+    r["a_id"] = a["id"]
+    r["b_id"] = b["id"]
     return r
 
 
@@ -157,7 +163,8 @@ def neighbours(pool, seed_id, mode="balanced", arc="steady", limit=25):
         r = _step(seed, t, mode, arc)
         out.append({"track": _public(t), "score": r["score"],
                     "reasons": r["reasons"], "mix": r["mix"],
-                    "stretch_pct": r["stretch_pct"]})
+                    "stretch_pct": r["stretch_pct"],
+                    "a_id": r["a_id"], "b_id": r["b_id"]})
     out.sort(key=lambda x: x["score"], reverse=True)
     return out[:limit]
 
