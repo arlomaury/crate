@@ -8,12 +8,13 @@ no FastAPI.
 import json
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
-from urllib.parse import unquote, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 
 from crateapp import crates as crate_ops
 from crateapp.classifier import rebuild_centroids
 from crateapp.db import LOCK
 from crateapp.exporters import export_folders, export_rekordbox
+from crateapp.sets import build_set, dedupe, load_pool, neighbours
 from crateapp.scanner import scan
 
 STATIC = Path(__file__).resolve().parent / "static"
@@ -115,6 +116,10 @@ def make_app(con, model_path, runner=None):
                             "unsorted": self._rows(crate_ops.unsorted(con)),
                         })
 
+                if path == "/api/setpool":
+                    q = parse_qs(urlsplit(self.path).query)
+                    return self._send(self._setpool(q.get("crate", [None])[0]))
+
                 if path == "/api/progress":
                     if runner is None:
                         raise ApiError("no runner configured", code=503)
@@ -143,6 +148,12 @@ def make_app(con, model_path, runner=None):
 
                 if self.path == "/api/start":
                     return self._send(self._start(payload))
+
+                if self.path == "/api/set":
+                    return self._send(self._build_set(payload))
+
+                if self.path == "/api/next":
+                    return self._send(self._next(payload))
             except ApiError as e:
                 return self._send_error(e)
             except Exception as e:                 # pragma: no cover - safety net
@@ -194,6 +205,50 @@ def make_app(con, model_path, runner=None):
                 # from it.
                 rebuild_centroids(con, model_path)
             return {"ok": True}
+
+        # -- set builder ----------------------------------------------
+        #
+        # The pool is rebuilt per request rather than cached: 60ms at full
+        # library size, against a cache that would have to be invalidated
+        # every time the runner finishes a track or the DJ makes a
+        # correction. Not worth the staleness bug.
+
+        def _pool(self, crate=None):
+            with LOCK:
+                return dedupe(load_pool(con, crate=crate))
+
+        # The seed picker shows a name, a tempo and a key. Shipping each
+        # track's full moment list too made the listing 393KB for 297 tracks
+        # and would be near a megabyte across the whole library, none of it
+        # read: mix points come back already computed on /api/set and
+        # /api/next.
+        LISTING = ("id", "filename", "bpm", "camelot", "duration", "energy",
+                   "vocal_ratio", "duplicates")
+
+        def _setpool(self, crate=None):
+            return {"tracks": [{k: t.get(k) for k in self.LISTING}
+                               for t in self._pool(crate)]}
+
+        def _build_set(self, payload):
+            seed = self._require(payload, "seed_id")
+            try:
+                return build_set(self._pool(payload.get("crate")), seed,
+                                 length=int(payload.get("length", 8)),
+                                 mode=payload.get("mode", "balanced"),
+                                 arc=payload.get("arc", "steady"))
+            except ValueError as e:
+                raise ApiError(str(e))
+
+        def _next(self, payload):
+            track_id = self._require(payload, "track_id")
+            try:
+                out = neighbours(self._pool(payload.get("crate")), track_id,
+                                 mode=payload.get("mode", "balanced"),
+                                 arc=payload.get("arc", "steady"),
+                                 limit=int(payload.get("limit", 25)))
+            except ValueError as e:
+                raise ApiError(str(e))
+            return {"next": out}
 
         def _export(self, payload):
             dest = self._require(payload, "dest")
