@@ -33,7 +33,10 @@ source "$HERE/.venv/bin/activate"
 python -m pip install --quiet --upgrade pip
 
 echo "Installing Essentia (this pulls TensorFlow, ~400MB, give it a few minutes)..."
-if ! pip install --quiet "essentia-tensorflow" "numpy"; then
+# scikit-learn is used to TRAIN the crate classifier (and to measure it in
+# eval_genre.py / tune_genre.py). Predicting never needs it: the trained
+# weights are exported into crate_model.json and applied with numpy.
+if ! pip install --quiet "essentia-tensorflow" "numpy" "scikit-learn"; then
   echo
   echo "Essentia failed to install on this Python version."
   echo "Wheels exist for Python 3.9-3.14. If you are outside that range:"
