@@ -121,3 +121,35 @@ def test_a_crate_in_no_family_is_judged_on_its_own(tmp_path):
     out = Classifier(p).classify(np.array([0, 1, 0, 0, 0, 0, 0, 0], dtype="float32"))
     assert out["family"] is None
     assert out["p_family"] == out["p"]
+
+
+# ------------------------------------------------------------- acapellas
+
+def test_a_confident_acapella_goes_to_vocals():
+    """An isolated vocal has no drum pattern, bassline or production style
+    left, so a genre model trained on full mixes guesses from timbre alone.
+    Routing them out before the genre question is a stated requirement - and
+    before this rule 20 acapellas had been auto-filed as pop, house and rap."""
+    from crateapp.classifier import acapella_verdict
+    v = {"is_acapella": True, "needs_review": False, "score": 1.0}
+    assert acapella_verdict(v, ["house", "vocals"]) == "vocals"
+
+
+def test_a_full_mix_is_left_to_the_genre_model():
+    from crateapp.classifier import acapella_verdict
+    assert acapella_verdict({"is_acapella": False}, ["house", "vocals"]) is None
+    assert acapella_verdict(None, ["house", "vocals"]) is None
+
+
+def test_a_track_merely_flagged_for_review_is_not_overridden():
+    """2-of-3 signals means 'unsure', and flag-rather-than-guess cuts both
+    ways: an unsure acapella call must not override the genre model either."""
+    from crateapp.classifier import acapella_verdict
+    v = {"is_acapella": False, "needs_review": True, "score": 0.5}
+    assert acapella_verdict(v, ["house", "vocals"]) is None
+
+
+def test_no_vocals_crate_means_no_override():
+    """Never invent a crate the DJ does not have."""
+    from crateapp.classifier import acapella_verdict
+    assert acapella_verdict({"is_acapella": True}, ["house", "tech"]) is None

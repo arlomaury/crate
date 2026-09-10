@@ -294,12 +294,27 @@ def main():
     ap.add_argument("--xml", default=str(Path.home() / "Documents" / "rek.xml"))
     ap.add_argument("--db", default=str(Path.home() / ".crate" / "library.db"))
     ap.add_argument("--folds", type=int, default=5)
+    ap.add_argument("--from-db", action="store_true",
+                    help="use every label in the library, including the DJ's "
+                         "in-app confirmations, instead of just rek.xml")
     a = ap.parse_args()
 
-    labels = xml_labels(a.xml)
-    print(f"\nGround truth from {a.xml}: {len(labels)} cleanly labelled tracks")
-
     con = connect(a.db)
+    if a.from_db:
+        from crateapp.classifier import training_set
+        ids, labs = training_set(con)
+        paths = {r["id"]: Path(r["path"])
+                 for r in con.execute("SELECT id, path FROM tracks").fetchall()}
+        labels = {paths[i]: l for i, l in zip(ids, labs) if i in paths}
+        print(f"\nGround truth from the library: {len(labels)} labelled tracks")
+        print("  NOTE: this includes tracks confirmed in the app, which are by "
+              "definition\n  cases the model already got right. Accuracy "
+              "measured on them reads high\n  for that reason - compare "
+              "against the rek.xml-only number, not instead of it.")
+    else:
+        labels = xml_labels(a.xml)
+        print(f"\nGround truth from {a.xml}: "
+              f"{len(labels)} cleanly labelled tracks")
     X, y, ids, names = load_features(con, labels)
 
     # Deduplicate BEFORE cross-validation. This library holds the same

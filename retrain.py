@@ -23,7 +23,7 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-from crateapp.classifier import Classifier, train
+from crateapp.classifier import Classifier, acapella_verdict, train
 from crateapp.crates import auto_assign
 from crateapp.db import LOCK, connect
 from crateapp.worker import load_embedding
@@ -96,10 +96,15 @@ def reclassify(con, model_path):
         print("No crates to classify against.", file=sys.stderr)
         return {}
 
+    import json as _json
     with LOCK:
         ids = [r["id"] for r in con.execute(
             "SELECT t.id FROM tracks t JOIN embeddings e ON e.track_id=t.id "
             "WHERE t.analysed_at IS NOT NULL AND t.missing=0").fetchall()]
+        vocals = {r["track_id"]: _json.loads(r["vocal"])
+                  for r in con.execute(
+                      "SELECT track_id, vocal FROM analysis "
+                      "WHERE vocal IS NOT NULL").fetchall()}
         # Human labels are the ground truth and must survive re-filing.
         human = {r["track_id"] for r in con.execute(
             "SELECT track_id FROM assignments WHERE source='human'").fetchall()}
@@ -111,6 +116,15 @@ def reclassify(con, model_path):
             continue
         vec = load_embedding(con, tid)
         if vec is None:
+            continue
+        aca = acapella_verdict(vocals.get(tid), clf.crate_names())
+        if aca:
+            result = {"crate": aca, "band": "confident", "similarity": 1.0,
+                      "margin": 1.0, "p": 1.0,
+                      "scores": [{"crate": aca, "p": 1.0}]}
+            bands["acapella -> vocals"] += 1
+            with LOCK:
+                auto_assign(con, tid, result)
             continue
         result = clf.classify(vec)
         bands[result["band"]] += 1

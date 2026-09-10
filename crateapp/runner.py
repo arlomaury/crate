@@ -21,7 +21,7 @@ import threading
 from pathlib import Path
 
 import analyze
-from crateapp.classifier import Classifier
+from crateapp.classifier import Classifier, acapella_verdict
 from crateapp.crates import auto_assign
 from crateapp.db import LOCK, connect
 from crateapp.scanner import pending, scan
@@ -150,7 +150,7 @@ class Runner:
             trow = con.execute(
                 "SELECT * FROM tracks WHERE id=?", (row["id"],)).fetchone()
             arow = con.execute(
-                "SELECT energy FROM analysis WHERE track_id=?",
+                "SELECT energy, vocal FROM analysis WHERE track_id=?",
                 (row["id"],)).fetchone()
             vec = load_embedding(con, row["id"]) if ok else None
 
@@ -172,7 +172,18 @@ class Runner:
         if vec is None or classifier is None or not classifier.crate_names():
             return current
 
-        result = classifier.classify(vec)
+        # Acapellas are routed out before the genre question is asked - see
+        # classifier.acapella_verdict for why the DSP verdict beats the model
+        # here.
+        vocal = json.loads(arow["vocal"]) if arow and arow["vocal"] else None
+        aca = acapella_verdict(vocal, classifier.crate_names())
+        if aca:
+            result = {"crate": aca, "band": "confident", "similarity": 1.0,
+                      "margin": 1.0, "p": 1.0,
+                      "scores": [{"crate": aca, "p": 1.0}],
+                      "reason": "acapella"}
+        else:
+            result = classifier.classify(vec)
 
         # The panel shows the numbers the decision was actually made on, taken
         # straight from classify(). Recomputing a separate score here is how

@@ -103,6 +103,34 @@ FALLBACK_MARGIN = 0.02
 # One threshold, not two.
 
 
+# An isolated vocal has no drum pattern, no bassline and no production style
+# left in it, so a genre model trained on full mixes guesses from vocal timbre
+# alone - confidently and often wrongly. Routing acapellas out BEFORE the genre
+# question is asked was an explicit request from the DJ, and it is also just
+# correct.
+#
+# The DSP detector is the better judge here and by a wide margin: measured
+# 27/27 acapellas caught with 0 false positives across 130 full mixes, against
+# the learned model's 0.933 recall. Before this override 20 acapellas had been
+# auto-filed as pop, house, rap and UKG - the kind of mix-up that surfaces as
+# an unpleasant surprise mid-set.
+VOCALS_CRATE = "vocals"
+
+
+def acapella_verdict(vocal, crate_names):
+    """The crate an acapella belongs in, or None to let genre decide.
+
+    `vocal` is the dict analyze.vocal_profile() stored. Only its confident
+    verdict overrides; a track it merely flagged for review is left to the
+    genre model, which is what "flag rather than guess" means here.
+    """
+    if not vocal or not vocal.get("is_acapella"):
+        return None
+    if VOCALS_CRATE not in set(crate_names):
+        return None            # the DJ has no such crate; do not invent one
+    return VOCALS_CRATE
+
+
 def _unit(a):
     a = np.asarray(a, dtype=np.float32)
     if a.ndim == 1:
