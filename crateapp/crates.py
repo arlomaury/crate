@@ -47,7 +47,7 @@ def auto_assign(con, track_id, result):
     con.commit()
 
 
-def correct(con, track_id, to_crate, mode="move", was_error=None):
+def correct(con, track_id, to_crate=None, mode="move", was_error=None):
     """Apply a human decision about a track's crate membership.
 
     mode='move' - the track leaves its current primary crate (its 'auto'
@@ -79,9 +79,45 @@ def correct(con, track_id, to_crate, mode="move", was_error=None):
         'confirmed' rather than deleting it - the track must stay filed in
         the crate it was auto-assigned to, only the "still needs a look"
         flag is cleared.
+    mode='confirm' - the classifier already put it in the right crate. No
+        membership changes; `to_crate` is ignored and may be omitted, because
+        the answer is wherever the track already is.
+
+        This does more than dismiss the row. The provisional 'auto' placement
+        is promoted to a source='human' one, which means a confirmed track
+        becomes training data - and with only a few hundred labelled
+        recordings to learn from, a confirmation is worth as much to the model
+        as a correction. Recorded with was_error=0: the model was right, and
+        counting confirmations as failures would make its accuracy look worse
+        the more the DJ agreed with it.
+
+        Only tracks the classifier actually filed can be confirmed. A track it
+        gave up on (unknown, filed nowhere) has no placement to agree with, so
+        confirming one is a caller error, not a silent no-op.
     """
-    if mode not in ("move", "add"):
-        raise ValueError("mode must be 'move' or 'add'")
+    if mode not in ("move", "add", "confirm"):
+        raise ValueError("mode must be 'move', 'add' or 'confirm'")
+
+    if mode == "confirm":
+        row = con.execute(
+            "SELECT crate_id FROM assignments "
+            "WHERE track_id=? AND source='auto'", (track_id,)).fetchone()
+        if row is None:
+            raise ValueError(
+                "nothing to confirm: this track was not filed automatically")
+        to_id = row["crate_id"]
+        con.execute("DELETE FROM assignments WHERE track_id=? AND source='auto'",
+                    (track_id,))
+        con.execute(
+            "INSERT OR REPLACE INTO assignments "
+            "(track_id, crate_id, source, confidence, band) "
+            "VALUES (?,?,'human',1.0,'confident')", (track_id, to_id))
+        con.execute(
+            "INSERT INTO corrections (track_id, from_crate, to_crate, was_error) "
+            "VALUES (?,?,?,0)", (track_id, to_id, to_id))
+        con.commit()
+        return
+
     to_id = ensure_crate(con, to_crate)
 
     from_id = None

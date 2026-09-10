@@ -730,3 +730,13 @@ button.sp-play:disabled { opacity: .35; cursor: default; }
 }
 .sp-actions button:hover:not(:disabled) { border-color: var(--accent-dim); }
 .sp-actions button:disabled { opacity: .4; cursor: default; }
+
+/* Confirming is the common answer in the review queue, so it leads and it
+   reads as the affirmative one. */
+button.confirm-btn {
+  background: rgba(47,109,79,.22);
+  border-color: #2f6d4f;
+  color: #8fdcb0;
+  font-weight: 550;
+}
+button.confirm-btn:hover:not(:disabled) { background: rgba(47,109,79,.36); }

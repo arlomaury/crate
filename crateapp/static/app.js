@@ -372,6 +372,28 @@ function reviewRow(track, group) {
   const also = el("button", null, "Also add");
   const target = () => (sel.value === "__new__" ? fresh.value.trim() : sel.value);
 
+  /* Most of this queue is the model being right but unsure. That case needs
+   * one click, not a crate picker - and confirming is not a dismissal: it
+   * promotes the guess to one of the DJ's own labels, so the model learns
+   * from the agreement. Only offered where there is a placement to agree
+   * with; a track the model gave up on has none. */
+  let ok = null;
+  if (group === "uncertain" && track.crate) {
+    ok = el("button", "confirm-btn", `Correct`);
+    ok.title = `Yes, ${track.filename} belongs in ${track.crate}`;
+    ok.addEventListener("click", async () => {
+      ok.disabled = move.disabled = also.disabled = true;
+      try {
+        await api.post("/api/correct", { track_id: track.id, mode: "confirm" });
+        row.style.opacity = "0";
+        setTimeout(refresh, 160);
+      } catch (e) {
+        fail(e.message);
+        ok.disabled = move.disabled = also.disabled = false;
+      }
+    });
+  }
+
   move.addEventListener("click", () => send("move", true));
   also.addEventListener("click", () => {
     if (!ask.classList.contains("on")) { ask.classList.add("on"); return; }
@@ -393,6 +415,7 @@ function reviewRow(track, group) {
     }
   }
 
+  if (ok) act.append(ok);
   act.append(sel, fresh, ask, move, also);
   // The controls live inside the row; without this, choosing a crate or
   // pressing Move would also fire the row's select/play handlers.
@@ -1113,7 +1136,27 @@ function panelActions(track) {
   move.addEventListener("click", () => send("move"));
   add.addEventListener("click", () => send("add"));
 
-  box.append(el("span", "v-key", "File it"), sel, fresh, move, add);
+  box.append(el("span", "v-key", "File it"));
+
+  // Same one-click agreement as the review queue, wherever the track is
+  // being looked at.
+  if (track.band === "uncertain" && filed) {
+    const ok = el("button", "confirm-btn", "Correct");
+    ok.title = `Yes, this belongs in ${filed}`;
+    ok.addEventListener("click", async () => {
+      ok.disabled = true;
+      try {
+        await api.post("/api/correct", { track_id: track.id, mode: "confirm" });
+        status(`Confirmed in ${filed}.`);
+        state.panelTrack = await api.get("/api/track/" + track.id);
+        await refresh();
+        renderPanel();
+      } catch (e) { fail(e.message); ok.disabled = false; }
+    });
+    box.append(ok);
+  }
+
+  box.append(sel, fresh, move, add);
   return box;
 }
 

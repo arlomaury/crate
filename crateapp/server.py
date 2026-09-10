@@ -244,8 +244,11 @@ def make_app(con, model_path, runner=None):
 
         def _correct(self, payload):
             track_id = self._require(payload, "track_id")
-            to_crate = self._require(payload, "to_crate")
             mode = payload.get("mode", "move")
+            # A confirm has no destination: the answer is wherever the track
+            # already is.
+            to_crate = (payload.get("to_crate") if mode == "confirm"
+                        else self._require(payload, "to_crate"))
             was_error = payload.get("was_error")
             with LOCK:
                 try:

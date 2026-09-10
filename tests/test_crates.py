@@ -143,3 +143,77 @@ def test_reclassifying_a_track_replaces_the_prior_auto_row(con):
         "SELECT c.name FROM assignments a JOIN crates c ON c.id=a.crate_id "
         "WHERE a.track_id=1 AND a.source='auto'").fetchall()
     assert [r["name"] for r in rows] == ["Dubstep"]
+
+
+# ------------------------------------------------------------ confirming
+
+def test_confirm_takes_a_track_out_of_review(tmp_path):
+    """The classifier was right. Saying so must clear the flag."""
+    con = connect(tmp_path / "l.db")
+    con.execute("INSERT INTO tracks (id, path, analysed_at) VALUES (1,'/a.wav','now')")
+    con.commit()
+    auto_assign(con, 1, {"crate": "house", "band": "uncertain", "similarity": 0.6})
+    assert len(uncertain(con)) == 1
+    correct(con, 1, mode="confirm")
+    assert uncertain(con) == []
+
+
+def test_confirm_leaves_the_track_where_it_is(tmp_path):
+    con = connect(tmp_path / "l.db")
+    con.execute("INSERT INTO tracks (id, path, analysed_at) VALUES (1,'/a.wav','now')")
+    con.commit()
+    auto_assign(con, 1, {"crate": "house", "band": "uncertain", "similarity": 0.6})
+    correct(con, 1, mode="confirm")
+    rows = con.execute(
+        "SELECT c.name FROM assignments a JOIN crates c ON c.id=a.crate_id "
+        "WHERE a.track_id=1").fetchall()
+    assert [r["name"] for r in rows] == ["house"]
+
+
+def test_a_confirmed_track_becomes_training_data(tmp_path):
+    """The point of confirming: with only a few hundred labels to learn from,
+    agreeing with the model is worth as much as correcting it."""
+    from crateapp.classifier import training_set
+    con = connect(tmp_path / "l.db")
+    con.execute("INSERT INTO tracks (id, path, analysed_at) VALUES (1,'/a.wav','now')")
+    con.commit()
+    auto_assign(con, 1, {"crate": "house", "band": "uncertain", "similarity": 0.6})
+    assert training_set(con)[0] == [], "an auto guess is not training data"
+    correct(con, 1, mode="confirm")
+    assert training_set(con) == ([1], ["house"])
+
+
+def test_confirm_is_not_recorded_as_an_error(tmp_path):
+    """Counting agreement as failure would make the model look worse the more
+    the DJ agreed with it."""
+    con = connect(tmp_path / "l.db")
+    con.execute("INSERT INTO tracks (id, path, analysed_at) VALUES (1,'/a.wav','now')")
+    con.commit()
+    auto_assign(con, 1, {"crate": "house", "band": "uncertain", "similarity": 0.6})
+    correct(con, 1, mode="confirm")
+    assert con.execute("SELECT was_error FROM corrections").fetchone()["was_error"] == 0
+
+
+def test_confirming_a_track_the_model_gave_up_on_is_an_error(tmp_path):
+    """An 'unknown' track was filed nowhere, so there is no placement to
+    agree with. Silently doing nothing would look like it worked."""
+    con = connect(tmp_path / "l.db")
+    con.execute("INSERT INTO tracks (id, path, analysed_at) VALUES (1,'/a.wav','now')")
+    con.commit()
+    auto_assign(con, 1, {"crate": None, "band": "unknown"})
+    with pytest.raises(ValueError):
+        correct(con, 1, mode="confirm")
+
+
+def test_confirm_survives_a_later_move(tmp_path):
+    """Changing your mind after confirming must replace, not duplicate."""
+    con = connect(tmp_path / "l.db")
+    con.execute("INSERT INTO tracks (id, path, analysed_at) VALUES (1,'/a.wav','now')")
+    con.commit()
+    auto_assign(con, 1, {"crate": "house", "band": "uncertain", "similarity": 0.6})
+    correct(con, 1, mode="confirm")
+    correct(con, 1, "tech", mode="move")
+    rows = con.execute(
+        "SELECT c.name FROM assignments a JOIN crates c ON c.id=a.crate_id "
+        "WHERE a.track_id=1").fetchall()
+    assert [r["name"] for r in rows] == ["tech"]

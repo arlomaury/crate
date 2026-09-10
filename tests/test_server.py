@@ -426,3 +426,57 @@ def test_a_failed_retrain_does_not_take_the_server_down(tmp_path):
     from crateapp.server import _Retrainer
     r = _Retrainer(None, tmp_path / "nope" / "m.json", delay=0.01)
     r.flush()          # would raise if the failure escaped
+
+
+# ---------------------------------------------------------- confirming
+
+def _uncertain_base(tmp_path):
+    from crateapp.crates import auto_assign
+    con = connect(tmp_path / "u.db")
+    con.execute("INSERT INTO tracks (id, path, filename, analysed_at, bpm) "
+                "VALUES (1,'/a.wav','a.wav','now',128.0)")
+    con.commit()
+    auto_assign(con, 1, {"crate": "house", "band": "uncertain",
+                         "similarity": 0.61})
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), make_app(con, tmp_path / "m.json"))
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return con, srv, f"http://127.0.0.1:{srv.server_port}"
+
+
+def test_confirm_over_http_needs_no_destination(tmp_path):
+    """The answer is wherever the track already is, so requiring to_crate
+    would make the one-click case a two-step one."""
+    con, srv, base = _uncertain_base(tmp_path)
+    try:
+        assert len(get(base + "/api/review")["uncertain"]) == 1
+        post(base + "/api/correct", {"track_id": 1, "mode": "confirm"})
+        assert get(base + "/api/review")["uncertain"] == []
+        assert get(base + "/api/crate/house")["tracks"][0]["id"] == 1
+    finally:
+        srv.shutdown()
+
+
+def test_a_move_still_requires_a_destination(tmp_path):
+    con, srv, base = _uncertain_base(tmp_path)
+    try:
+        with pytest.raises(urllib.error.HTTPError) as e:
+            post(base + "/api/correct", {"track_id": 1, "mode": "move"})
+        assert e.value.code == 400
+    finally:
+        srv.shutdown()
+
+
+def test_confirming_an_unfiled_track_is_a_clean_error(tmp_path):
+    con = connect(tmp_path / "n.db")
+    con.execute("INSERT INTO tracks (id, path, filename, analysed_at) "
+                "VALUES (1,'/a.wav','a.wav','now')")
+    con.commit()
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), make_app(con, tmp_path / "m.json"))
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        with pytest.raises(urllib.error.HTTPError) as e:
+            post(f"http://127.0.0.1:{srv.server_port}/api/correct",
+                 {"track_id": 1, "mode": "confirm"})
+        assert e.value.code == 400
+    finally:
+        srv.shutdown()
