@@ -67,6 +67,7 @@ and **declined** — do not add them without asking again.
 | `groove_experiment.py` | Extracts beat-synchronous rhythm features (cached at `~/.crate/groove.npz`) and tests whether groove separates house from tech house. It does not — see the dead-ends table. |
 | `house_vs_tech.py` | Tests every available signal on the one distinction that is left, under repeated CV. |
 | `retrain.py` | Resets ground truth from the DJ's Rekordbox export and retrains. Run after re-exporting `rek.xml`. |
+| — | Removing a track (`crates.remove_track`, `POST /api/remove`) drops the DJ's *record* of it and **never the file**. Two clicks in the UI; there is a test asserting the bytes on disk survive. |
 | `crate_model.json` | Trained weights + centroids + provenance. |
 | `crate.command` | Double-click launcher. `~/Desktop/Crate.app` wraps it. |
 | `viewer_template.html` | The original standalone viewer (superseded by the app, still works). |
@@ -100,6 +101,33 @@ nearest crate centroid answers this instead, and the centroids are kept for
 exactly that. **This is what lets the app spot a genuinely new sound** rather
 than forcing every track into an existing crate — an explicit user
 requirement.
+
+### §3a. Who made it beats what it sounds like
+
+The decision order is: **artist → acapella → audio model.**
+
+Measured leave-one-out across 659 labelled tracks whose artist has another
+labelled track, "same artist, same crate" is right **95.6%** of the time, and
+**97.3%** on house vs tech house — the pair three independent audio signals
+could not separate above ~74%. Of 276 artists with more than one labelled
+track, only 9 are split across crates, and those are exactly the ambiguous
+ones (Drake in house and rap, Rihanna across house/pop/vocals — originals
+against edits).
+
+`crates.artist_crate` applies it, and only when the DJ's own filing for that
+artist is **unanimous**; a split artist is genuinely ambiguous and it declines
+rather than picking a side. Where the audio model disagrees with the artist,
+the track is marked `disputed` — the rule is 95.6%, not 100%, and a remix
+credited to the original artist is exactly how it goes wrong.
+
+**This is not the filename-keyword dead end.** That guessed a genre from words
+in a title. This asks "have I already filed this artist", which the DJ answers
+consistently. Never reintroduce genre-from-words.
+
+Coverage is the limit, not accuracy: artist tags exist on 1,248 of 1,632
+files, but only ~14% of *unfiled* tracks are by an artist already filed
+unanimously. **Coverage grows every time the DJ files a track by a new
+artist**, which is the strongest argument for working the review queue.
 
 **Confidence is measured over the family, not the crate.** A track split 0.45
 house / 0.40 tech is 0.85 sure of the family and merely unsure which half — so
@@ -143,8 +171,10 @@ here follows Beatport's tagging, which is a convention rather than a property
 of the sound.
 
 **Merging them is an open product question — ask, do not decide.** Anyone
-planning to "fix" this pair with a better model should read the dead-ends
-table first and expect to be disappointed.
+planning to "fix" this pair with a better *audio* model should read the
+dead-ends table first and expect to be disappointed.
+
+**But the pair is not unfixable — it just is not an audio problem.** See §3a.
 
 Threshold trade-off (family-summed probability), and why 0.65:
 
@@ -252,8 +282,10 @@ are separate rows now.
    will fix it.
 4. **Export and load onto a USB / CDJ** with the re-sorted crates.
 5. More labels **only for afro (20) and UKG (25)** — those two crates are
-   individually starved (afro recall 0.30, UKG 0.64). Overall accuracy has
-   plateaued, so labelling anything else is not worth the evening.
+   individually starved (afro recall 0.30, UKG 0.64). Overall *audio* accuracy
+   has plateaued, so labelling for its own sake is not worth the evening —
+   but every track filed by a NEW artist extends the artist rule's coverage,
+   which is worth a great deal (§3a).
 6. An untested idea worth one experiment if the above is exhausted: swap
    Discogs-EffNet for **MuQ** (`pip install muq`, PyTorch, CPU-capable, needs
    24kHz audio), the current state of the art on music genre benchmarks. It
