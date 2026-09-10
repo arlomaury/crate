@@ -512,3 +512,26 @@ def test_stop_without_a_runner_is_a_clean_503(tmp_path):
         assert e.value.code == 503
     finally:
         srv.shutdown()
+
+
+def test_a_pending_retrain_is_flushed_on_shutdown(tmp_path):
+    """A correction made seconds before quitting leaves a retrain on a timer.
+    Without a flush it is simply dropped and the model silently stays behind
+    until some later correction happens to fire one."""
+    from crateapp.server import _Retrainer
+    calls = []
+    r = _Retrainer(None, tmp_path / "m.json", delay=999)
+    r._run = lambda: calls.append(1)
+    r.schedule()
+    assert calls == []
+    r.flush()
+    assert calls == [1]
+
+
+def test_flush_is_reachable_from_the_server_object(tmp_path):
+    """serve() reaches the retrainer through the handler class on shutdown;
+    if that attribute ever moves, the flush silently stops happening."""
+    con = connect(tmp_path / "s.db")
+    Handler = make_app(con, tmp_path / "m.json")
+    assert hasattr(Handler, "retrainer")
+    assert callable(Handler.retrainer.flush)

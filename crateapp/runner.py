@@ -20,8 +20,6 @@ import json
 import threading
 from pathlib import Path
 
-import numpy as np
-
 import analyze
 from crateapp.classifier import Classifier
 from crateapp.crates import auto_assign

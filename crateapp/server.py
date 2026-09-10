@@ -631,4 +631,11 @@ def serve(con, model_path, port=8420, runner=None):
     except KeyboardInterrupt:
         pass
     finally:
+        # A correction made in the last few seconds has a retrain still
+        # pending on a timer. Without this it is simply lost, and the model
+        # silently stays behind until the next correction happens to fire one.
+        try:
+            srv.RequestHandlerClass.retrainer.flush()
+        except Exception:
+            pass
         srv.server_close()

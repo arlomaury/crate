@@ -947,32 +947,42 @@ const player = {
     cancelAnimationFrame(this.raf);
     const step = () => {
       if (!this.audio || this.audio.paused) return this.paint();
-      this.paint();
+      this.paintFrame();
       this.raf = requestAnimationFrame(step);
     };
     this.raf = requestAnimationFrame(step);
   },
 
-  paint() {
+  /* Split deliberately. The playhead needs every frame; the row list does
+   * not. Marking the playing row swept every [data-track-id] node - up to 800
+   * of them in a big crate - sixty times a second, for a class that changes
+   * only when the deck does. */
+  paintFrame() {
     const t = shownTrack();
     if (t && t.id === this.trackId) drawWave(t, false);
     const b = $("#sp-play");
     if (b) {
-      const live = t && this.isPlaying(t.id);
-      b.textContent = live ? "Pause" : "Play";
+      b.textContent = t && this.isPlaying(t.id) ? "Pause" : "Play";
       b.disabled = !t || t.id == null;
     }
     const c = $("#sp-clock");
     if (c) {
-      const t2 = shownTrack();
-      c.textContent = (t2 && this.trackId === t2.id)
-        ? `${clock(this.position())} / ${clock(t2.duration)}`
+      c.textContent = (t && this.trackId === t.id)
+        ? `${clock(this.position())} / ${clock(t.duration)}`
         : "";
     }
+  },
+
+  paintRows() {
     for (const row of document.querySelectorAll("[data-track-id]")) {
       row.classList.toggle("is-playing",
         this.isPlaying(Number(row.dataset.trackId)));
     }
+  },
+
+  paint() {
+    this.paintFrame();
+    this.paintRows();
   },
 };
 
@@ -1065,7 +1075,9 @@ function renderPanel() {
     $("#sp-name").textContent = "\u2014";
     $("#sp-sub").textContent = "";
     $("#sp-empty").classList.remove("hidden");
-    $("#sp-right").innerHTML = "";
+    const r = $("#sp-right");
+    r.innerHTML = "";
+    r.dataset.key = "";        // or the next track would skip its own build
     return;
   }
 
@@ -1081,8 +1093,14 @@ function renderPanel() {
   ].filter(Boolean).join("   \u00b7   ");
   $("#sp-empty").classList.toggle("hidden", !!(cur.energy && cur.energy.length));
 
-  drawWave(cur, running && changed);
-  if (changed) state.showAllBars = false;
+  // Only redraw when there is something new to draw. poll() calls this every
+  // 600ms during a run, and redrawing regardless made the genre bars collapse
+  // to zero and re-animate on every tick - the "numbers reset and go back"
+  // the DJ reported. The playhead has its own per-frame path in player.
+  if (changed) {
+    state.showAllBars = false;
+    drawWave(cur, running);
+  }
   drawBars(cur);
   player.paint();
 }
@@ -1202,7 +1220,12 @@ function drawWave(track, animate) {
   const dpr = window.devicePixelRatio || 1;
   const W = wrap.clientWidth, H = wrap.clientHeight;
   if (!W || !H) return;
-  cv.width = W * dpr; cv.height = H * dpr;
+  // Assigning width/height reallocates the backing store and clears it, so
+  // only do it when the size actually changed - this runs every frame while
+  // a track is playing.
+  if (cv.width !== W * dpr || cv.height !== H * dpr) {
+    cv.width = W * dpr; cv.height = H * dpr;
+  }
   const g = cv.getContext("2d");
   g.setTransform(dpr, 0, 0, dpr, 0, 0);
   g.clearRect(0, 0, W, H);
@@ -1317,6 +1340,14 @@ function drawBars(cur) {
   const sims = cur.similarities || [];
   const SHOW = state.showAllBars ? sims.length : Math.min(5, sims.length);
 
+  // Nothing here changes while the track does not, and rebuilding it anyway
+  // restarted every bar's fill animation from zero and threw away whatever
+  // crate the DJ had picked in the filing controls below.
+  const key = `${panelKey(cur)}|${state.showAllBars}|${cur.band}|${
+    (cur.crates || []).map((c) => c.name).join(",")}`;
+  if (root.dataset.key === key) return;
+  root.dataset.key = key;
+
   root.innerHTML = "";
   sims.slice(0, SHOW).forEach((s, i) => {
     const row = el("div", "bar-row" + (i === 0 ? " win" : ""));
@@ -1382,7 +1413,7 @@ function drawBars(cur) {
 
 /* ------------------------------------------------------------------ polling */
 
-let timer = null, lastReview = 0;
+let timer = null, lastReview = "";
 
 async function poll() {
   clearTimeout(timer);
@@ -1399,10 +1430,13 @@ async function poll() {
     if (running) {
       Object.assign(state, await api.get("/api/state"));
       renderSidebar();
-      // Only the review queue moves meaningfully mid-run; re-rendering a crate
-      // the DJ is reading would yank the list away under them.
-      if (state.view === "__review__" && Date.now() - lastReview > 3000) {
-        lastReview = Date.now();
+      // Only the review queue moves meaningfully mid-run; re-rendering a
+      // crate the DJ is reading would yank the list away under them. And
+      // even the queue is only rebuilt when its contents actually changed -
+      // a timed rebuild threw away whatever crate was half-chosen in a row.
+      const queue = `${state.uncertain}|${state.unsorted}`;
+      if (state.view === "__review__" && queue !== lastReview) {
+        lastReview = queue;
         await renderContent();
       }
     }
