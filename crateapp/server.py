@@ -6,6 +6,7 @@ from the network. Stdlib only (http.server / json / sqlite3) - no Flask,
 no FastAPI.
 """
 import json
+import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlsplit
@@ -30,7 +31,51 @@ class ApiError(Exception):
         self.code = code
 
 
+class _Retrainer:
+    """Retrain shortly after the DJ stops correcting, not during.
+
+    Fitting the crate model takes about a second on this library. Doing it
+    inside the correction request means every correction blocks for a second -
+    and blocks other requests too, since it holds the database lock. Someone
+    working through a review queue makes corrections in bursts, so the fit is
+    debounced: each correction pushes the retrain out, and it lands once the
+    burst is over. The model is a moment behind the DJ, which costs nothing;
+    a UI that stalls on every click costs them the session.
+    """
+
+    def __init__(self, con, model_path, delay=3.0):
+        self.con = con
+        self.model_path = model_path
+        self.delay = delay
+        self._timer = None
+        self._lock = threading.Lock()
+
+    def schedule(self):
+        with self._lock:
+            if self._timer is not None:
+                self._timer.cancel()
+            self._timer = threading.Timer(self.delay, self._run)
+            self._timer.daemon = True
+            self._timer.start()
+
+    def _run(self):
+        try:
+            with LOCK:
+                rebuild_centroids(self.con, self.model_path)
+        except Exception:
+            pass          # a failed retrain must never take the server down
+
+    def flush(self):
+        """Retrain now, for tests and shutdown."""
+        with self._lock:
+            if self._timer is not None:
+                self._timer.cancel()
+                self._timer = None
+        self._run()
+
+
 def make_app(con, model_path, runner=None):
+    retrainer = _Retrainer(con, model_path)
     class Handler(BaseHTTPRequestHandler):
         # HTTP/1.1 so the browser gets keep-alive and well-behaved range
         # requests. Every response below sends an accurate Content-Length,
@@ -211,13 +256,12 @@ def make_app(con, model_path, runner=None):
                     # bad mode value (crates.correct) - both are the caller's
                     # fault, not a server error.
                     raise ApiError(str(e))
-                # Corrections are the only thing that changes crate
-                # membership, so this is the one place the model needs to
-                # learn again. Classifier has no reload(): the cheap, correct
-                # move is to rebuild the centroid file and let the next
-                # classify() call construct a fresh Classifier(model_path)
-                # from it.
-                rebuild_centroids(con, model_path)
+            # Corrections are the only thing that changes crate membership, so
+            # this is the one place the model needs to learn again - but not
+            # on this request's clock. Classifier has no reload(): the next
+            # classify() constructs a fresh Classifier(model_path) from
+            # whatever the retrain last wrote.
+            retrainer.schedule()
             return {"ok": True}
 
         # -- audio preview ----------------------------------------------
@@ -557,6 +601,7 @@ def make_app(con, model_path, runner=None):
                 raise ApiError("no folders configured to scan")
             return {"started": runner.start(folders)}
 
+    Handler.retrainer = retrainer
     return Handler
 
 

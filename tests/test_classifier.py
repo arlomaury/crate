@@ -63,3 +63,61 @@ def test_the_real_shipped_model_loads():
     c = Classifier("crate_model.json")
     assert sorted(c.crate_names()) == [
         "DUBSTEP", "UKG", "afro", "house", "pop", "rap", "tech", "vocals"]
+
+
+# ------------------------------------------- crates the DJ treats as alike
+
+def _trained(tmp_path, classes, weights=None):
+    """A model file with a hand-built linear layer, so the banding rules can
+    be tested without fitting anything."""
+    import numpy as np
+    n = len(classes)
+    # Gentle weights on purpose: a steep layer turns any input into a
+    # near-certain answer, which would make these banding tests pass for the
+    # wrong reason. Each test asserts the probability split it relies on.
+    w = np.eye(n, 8, dtype=np.float32) * 2.0
+    return {
+        "crates": {c: {"n": 20, "centroid": np.eye(n, 8)[i].tolist()}
+                   for i, c in enumerate(classes)},
+        "linear": {"classes": list(classes), "w": w.tolist(),
+                   "b": [0.0] * n, "mean": [0.0] * 8, "scale": [1.0] * 8},
+    }
+
+
+def test_a_split_between_house_and_tech_is_still_filed(tmp_path):
+    """The DJ says a house/tech mix-up is not worth their time, so a track
+    torn between exactly those two should be filed, not queued."""
+    import numpy as np
+    p = tmp_path / "m.json"
+    p.write_text(json.dumps(_trained(tmp_path, ["house", "pop", "tech"])))
+    m = Classifier(p)
+    v = np.zeros(8, dtype=np.float32); v[0] = 0.52; v[2] = 0.48
+    out = m.classify(v)
+    by = {s["crate"]: s["p"] for s in out["scores"]}
+    assert abs(by["house"] - by["tech"]) < 0.1, "fixture must be a near-tie"
+    assert out["band"] == "confident"
+    assert out["crate"] in ("house", "tech")
+    assert out["p_family"] > out["p"], "family mass must exceed the single crate"
+
+
+def test_a_split_across_families_goes_to_review(tmp_path):
+    """The same near-tie between crates that are NOT alike must be queued -
+    this is the rap-filed-as-pop case the DJ complained about."""
+    import numpy as np
+    p = tmp_path / "m.json"
+    p.write_text(json.dumps(_trained(tmp_path, ["house", "pop", "tech"])))
+    m = Classifier(p)
+    v = np.zeros(8, dtype=np.float32); v[0] = 0.52; v[1] = 0.48
+    out = m.classify(v)
+    by = {s["crate"]: s["p"] for s in out["scores"]}
+    assert abs(by["house"] - by["pop"]) < 0.1, "fixture must be a near-tie"
+    assert out["band"] == "uncertain"
+
+
+def test_a_crate_in_no_family_is_judged_on_its_own(tmp_path):
+    import numpy as np
+    p = tmp_path / "m.json"
+    p.write_text(json.dumps(_trained(tmp_path, ["house", "pop", "tech"])))
+    out = Classifier(p).classify(np.array([0, 1, 0, 0, 0, 0, 0, 0], dtype="float32"))
+    assert out["family"] is None
+    assert out["p_family"] == out["p"]

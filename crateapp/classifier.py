@@ -62,24 +62,34 @@ import numpy as np
 # unusual than 99% of the music the DJ has already sorted.
 UNKNOWN_FLOOR = 0.56
 
-# File it, or send it to review? Measured trade-off at the regularisation this
-# model actually uses:
+# Crates whose members the DJ considers interchangeable. A house track filed
+# as tech house is not a mistake worth their time; a rap track filed as pop
+# is. That is their judgement, not an inference from the data, and it changes
+# what "confident" should mean.
 #
-#     threshold   filed   precision on what was filed
-#         0.50     79%        80.6%
-#         0.60     60%        84.9%
-#         0.70     40%        92.2%
-#         0.80     19%        96.5%
+# The consequence: confidence is measured over the FAMILY, not the single
+# crate. A track split 0.45 house / 0.40 tech is 0.85 sure it belongs in this
+# family and only unsure which half - so file it. A track split 0.45 house /
+# 0.40 pop is 0.45 sure of anything - so ask. One threshold does both jobs,
+# which is why there is no separate "minor error" rule below.
+NEAR_FAMILIES = [{"house", "tech"}]
+
+# Measured, summing probability within the family above:
 #
-# 0.70 is chosen because the complaint that prompted all of this was about
-# precision - wrong tracks turning up inside a crate - and because a track
-# left in the review queue costs a few seconds of the DJ's attention while a
-# wrongly filed one has to be found first. It does mean the queue is long.
-# Lower it to 0.60 to file more and review less.
+#     threshold   filed   to sort   errors that MATTER
+#         0.55     89%      11%          6.2%
+#         0.60     85%      15%          4.7%
+#         0.65     81%      19%          3.8%   <-
+#         0.75     71%      29%          3.4%
+#         0.80     64%      36%          3.1%
 #
-# Note this cannot be carried over from a differently regularised model:
-# at C=1.0 the same model saturates near 1.0 and 0.70 would file everything.
-CONFIDENT_PROB = 0.70
+# 0.65 is the knee: above it the queue grows fast and buys almost nothing.
+# It also beats thresholding on the single top crate outright - that files
+# 79% with 4.5% serious errors, so this files more AND gets more right.
+#
+# Cannot be carried across regularisation settings: at C=1.0 this model
+# saturates near 1.0 and 0.65 would file everything.
+CONFIDENT_PROB = 0.65
 
 # Only used when there is no trained layer yet (a brand new library). The old
 # measured value: crate members sit at 0.73+ cosine to their centroid, so a
@@ -186,20 +196,29 @@ class Classifier:
         classes = self.linear["classes"]
         order = np.argsort(probs)[::-1]
         top_i = int(order[0])
+        top = classes[top_i]
         p_top = float(probs[top_i])
         p_second = float(probs[int(order[1])]) if len(order) > 1 else 0.0
         margin = p_top - p_second
         scores = [{"crate": classes[i], "p": float(probs[i])} for i in order]
 
+        # Confidence that it belongs in this FAMILY, which is the question the
+        # DJ actually cares about being right on.
+        family = next((f for f in NEAR_FAMILIES if top in f), {top})
+        p_family = float(sum(probs[i] for i, c in enumerate(classes)
+                             if c in family))
+
         # Order matters: "unlike anything I own" outranks "which of these".
         if best_cos < UNKNOWN_FLOOR:
             band, crate = "unknown", None
-        elif p_top < CONFIDENT_PROB:
-            band, crate = "uncertain", classes[top_i]
+        elif p_family < CONFIDENT_PROB:
+            band, crate = "uncertain", top
         else:
-            band, crate = "confident", classes[top_i]
+            band, crate = "confident", top
 
         return {"crate": crate, "band": band, "p": round(p_top, 4),
+                "p_family": round(p_family, 4),
+                "family": sorted(family) if len(family) > 1 else None,
                 "margin": round(margin, 4),
                 "runner_up": classes[int(order[1])] if len(order) > 1 else None,
                 "similarity": round(best_cos, 4), "scores": scores}

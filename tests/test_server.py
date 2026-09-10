@@ -386,3 +386,43 @@ def test_crates_puts_the_djs_own_call_first(tmp_path):
         assert len(t["crates"]) == 2
     finally:
         srv.shutdown()
+
+
+# ------------------------------------------------------ retraining is async
+
+def test_a_correction_does_not_wait_for_the_model_to_retrain(base):
+    """Fitting the model takes about a second and holds the database lock.
+    Doing it inside the request made every correction stall the whole UI,
+    which is unusable when working through a review queue."""
+    import time
+    t0 = time.time()
+    post(base + "/api/correct",
+         {"track_id": 1, "to_crate": "Dubstep", "mode": "move"})
+    assert time.time() - t0 < 0.5
+
+
+def test_the_correction_itself_is_applied_immediately(base):
+    """Deferring the retrain must not defer the filing."""
+    post(base + "/api/correct",
+         {"track_id": 1, "to_crate": "Dubstep", "mode": "move"})
+    assert get(base + "/api/crate/Dubstep")["tracks"][0]["id"] == 1
+
+
+def test_a_burst_of_corrections_retrains_once_at_the_end(tmp_path):
+    """Each correction pushes the retrain out, so a burst costs one fit."""
+    from crateapp.server import _Retrainer
+    calls = []
+    r = _Retrainer(None, tmp_path / "m.json", delay=0.15)
+    r._run = lambda: calls.append(1)
+    for _ in range(5):
+        r.schedule()
+    assert calls == [], "must not fit while corrections are still arriving"
+    import time
+    time.sleep(0.4)
+    assert calls == [1], "exactly one fit after the burst settles"
+
+
+def test_a_failed_retrain_does_not_take_the_server_down(tmp_path):
+    from crateapp.server import _Retrainer
+    r = _Retrainer(None, tmp_path / "nope" / "m.json", delay=0.01)
+    r.flush()          # would raise if the failure escaped

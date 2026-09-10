@@ -1053,6 +1053,70 @@ function renderPanel() {
 
 const panelKey = (t) => `${t.id != null ? t.id : ""}|${t.filename}`;
 
+/* File the selected track by hand.
+ *
+ * These live in the panel rather than on every row: the row list is a
+ * filename at the height of a filename, and the decision is better made with
+ * the model's reasoning visible next to it, which is exactly what the panel
+ * already shows. It also means one set of controls works from the crate list,
+ * the review queue and the set builder alike. */
+function panelActions(track) {
+  const box = el("div", "sp-actions");
+
+  const sel = el("select");
+  for (const c of state.crates) sel.append(new Option(c.name, c.name));
+  sel.append(new Option("New crate…", "__new__"));
+  // Default to where it already is, never the alphabetically-first crate -
+  // otherwise Move quietly files it somewhere never chosen.
+  const filed = track.crates && track.crates.length ? track.crates[0].name : null;
+  if (filed) sel.value = filed;
+
+  const fresh = el("input"); fresh.type = "text";
+  fresh.placeholder = "Crate name"; fresh.classList.add("hidden");
+  sel.addEventListener("change", () => {
+    fresh.classList.toggle("hidden", sel.value !== "__new__");
+    if (sel.value === "__new__") fresh.focus();
+  });
+
+  const move = el("button", null, "Move here");
+  const add = el("button", null, "Also add");
+  move.title = "This track belongs in that crate instead";
+  add.title = "It belongs in that crate as well as where it is";
+
+  const target = () => (sel.value === "__new__" ? fresh.value.trim() : sel.value);
+
+  async function send(mode) {
+    const to = target();
+    if (!to) { fresh.focus(); return; }
+    if (mode === "move" && filed === to) {
+      status(`Already in ${to}.`);
+      return;
+    }
+    move.disabled = add.disabled = true;
+    try {
+      await api.post("/api/correct", {
+        track_id: track.id, to_crate: to, mode,
+        // A move says the model was wrong. An also-add does not: the DJ is
+        // saying it fits both, which is not the model failing.
+        was_error: mode === "move",
+      });
+      status(mode === "move" ? `Moved to ${to}.` : `Also added to ${to}.`);
+      state.panelTrack = await api.get("/api/track/" + track.id);
+      await refresh();
+      renderPanel();
+    } catch (e) {
+      fail(e.message);
+    } finally {
+      move.disabled = add.disabled = false;
+    }
+  }
+  move.addEventListener("click", () => send("move"));
+  add.addEventListener("click", () => send("add"));
+
+  box.append(el("span", "v-key", "File it"), sel, fresh, move, add);
+  return box;
+}
+
 /* ---- the waveform ------------------------------------------------------- */
 
 const WAVE_PAD = 10;
@@ -1226,6 +1290,8 @@ function drawBars(cur) {
    * what the model thinks of it now is another, and the margin belongs to the
    * second. Printed as one line they read as a single claim - "tech confident
    * · margin 0.023" on a track the model actually scored highest as house. */
+  if (cur.id != null) root.append(panelActions(cur));
+
   const v = el("div", "sp-verdict band-" + (cur.band || "unknown"));
   const filed = cur.crates && cur.crates.length ? cur.crates : null;
   if (filed) {

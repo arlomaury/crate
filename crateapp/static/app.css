@@ -700,3 +700,33 @@ button.sp-play:disabled { opacity: .35; cursor: default; }
   background: rgba(211,160,78,.14); color: var(--uncertain);
   font-size: 10px; text-transform: uppercase; letter-spacing: .05em;
 }
+
+/* Filing controls in the panel, beside the model's reasoning. */
+.sp-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+}
+.sp-actions select,
+.sp-actions input[type="text"] {
+  background: var(--bg-2);
+  border: 1px solid var(--line-2);
+  border-radius: 6px;
+  padding: 3px 7px;
+  height: 26px;
+  max-width: 150px;
+}
+.sp-actions button {
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 6px;
+  background: var(--bg-3);
+  border: 1px solid var(--line-2);
+  color: var(--ink);
+}
+.sp-actions button:hover:not(:disabled) { border-color: var(--accent-dim); }
+.sp-actions button:disabled { opacity: .4; cursor: default; }
