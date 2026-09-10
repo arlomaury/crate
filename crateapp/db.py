@@ -68,16 +68,31 @@ def connect(path):
     """Open the catalogue, creating it if needed."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    # check_same_thread=False: the connection this returns is handed to the
-    # HTTP server (crateapp.server), whose request-handling thread is not
-    # the thread that called connect(). Access from that one server thread
-    # is still effectively serial (HTTPServer handles one request at a
-    # time), so this does not introduce concurrent use of the connection -
-    # it only lifts sqlite3's same-thread check so a single-threaded HTTP
-    # server can be handed a connection built during setup.
+    # check_same_thread=False: this connection is shared by the HTTP server
+    # (which serves each request on its own thread) and the pipeline runner,
+    # neither of which is the thread that called connect(). Concurrent use is
+    # real, so every access goes through the module-level LOCK; this flag only
+    # lifts sqlite3's same-thread assertion.
     con = sqlite3.connect(str(path), check_same_thread=False)
     con.row_factory = sqlite3.Row
     con.execute("PRAGMA foreign_keys = ON")
     con.executescript(SCHEMA)
+    migrate(con)
     con.commit()
     return con
+
+
+def migrate(con):
+    """Add columns to a catalogue that predates them.
+
+    The schema is applied with CREATE TABLE IF NOT EXISTS, which does nothing
+    at all to a table that already exists - so a new column has to be added
+    explicitly or every existing library breaks on upgrade.
+    """
+    have = {r["name"] for r in con.execute("PRAGMA table_info(assignments)")}
+    if "disputed" not in have:
+        # Set when two independent signals - the trained layer and the plain
+        # distance-to-centroid - land on different crates. Measured on this
+        # library: confidently filed tracks where they disagree are wrong 25%
+        # of the time against 2.9% where they agree.
+        con.execute("ALTER TABLE assignments ADD COLUMN disputed INTEGER DEFAULT 0")

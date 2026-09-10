@@ -44,3 +44,33 @@ def test_the_same_track_cannot_join_one_crate_twice(tmp_path):
         raise AssertionError("expected a uniqueness violation")
     except sqlite3.IntegrityError:
         pass
+
+
+def test_an_existing_catalogue_gains_new_columns(tmp_path):
+    """The schema is applied with CREATE TABLE IF NOT EXISTS, which does
+    nothing to a table that already exists. Without an explicit migration,
+    every library built before the column was added breaks on upgrade."""
+    import sqlite3
+    p = tmp_path / "old.db"
+    # A catalogue as it looked before `disputed` existed.
+    old = sqlite3.connect(p)
+    old.executescript("""
+        CREATE TABLE crates (id INTEGER PRIMARY KEY, name TEXT UNIQUE);
+        CREATE TABLE tracks (id INTEGER PRIMARY KEY, path TEXT UNIQUE);
+        CREATE TABLE assignments (
+            track_id INTEGER NOT NULL, crate_id INTEGER NOT NULL,
+            source TEXT NOT NULL, confidence REAL, band TEXT,
+            PRIMARY KEY (track_id, crate_id));
+    """)
+    old.commit(); old.close()
+
+    con = connect(p)
+    cols = {r["name"] for r in con.execute("PRAGMA table_info(assignments)")}
+    assert "disputed" in cols
+
+
+def test_migrating_twice_is_harmless(tmp_path):
+    p = tmp_path / "x.db"
+    connect(p).close()
+    con = connect(p)          # would raise "duplicate column" if not guarded
+    assert "disputed" in {r["name"] for r in con.execute("PRAGMA table_info(assignments)")}

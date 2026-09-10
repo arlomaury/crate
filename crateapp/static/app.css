@@ -740,3 +740,8 @@ button.confirm-btn {
   font-weight: 550;
 }
 button.confirm-btn:hover:not(:disabled) { background: rgba(47,109,79,.36); }
+
+/* Confidently filed but doubted by the second signal. Marked in the accent
+   rather than a warning colour: these are worth a look, not a failure. */
+.pill.disputed { background: rgba(110,143,255,.16); color: var(--accent); }
+.r-why.disputed { color: var(--accent); }

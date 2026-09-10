@@ -1,6 +1,7 @@
 import pytest
 from crateapp.db import connect
-from crateapp.crates import (ensure_crate, auto_assign, correct, uncertain, unsorted)
+from crateapp.crates import (ensure_crate, auto_assign, correct, disputed,
+                             uncertain, unsorted)
 
 
 @pytest.fixture
@@ -217,3 +218,47 @@ def test_confirm_survives_a_later_move(tmp_path):
         "SELECT c.name FROM assignments a JOIN crates c ON c.id=a.crate_id "
         "WHERE a.track_id=1").fetchall()
     assert [r["name"] for r in rows] == ["tech"]
+
+
+# -------------------------------------------------- confident but doubted
+
+def test_disputed_surfaces_confident_tracks_the_signals_disagree_on(tmp_path):
+    """A confident mistake never reaches uncertain(), which is exactly why it
+    is dangerous. Measured on the real library: 25% of these are misfiled,
+    against 2.9% of the confident tracks where both signals agree."""
+    con = connect(tmp_path / "l.db")
+    con.execute("INSERT INTO tracks (id, path, analysed_at) VALUES (1,'/a.wav','now')")
+    con.commit()
+    auto_assign(con, 1, {"crate": "house", "band": "confident",
+                         "similarity": 0.8, "disputed": True})
+    assert [r["id"] for r in disputed(con)] == [1]
+    assert uncertain(con) == [], "it is confident; it must not be in that queue"
+
+
+def test_an_agreed_confident_track_is_not_disputed(tmp_path):
+    con = connect(tmp_path / "l.db")
+    con.execute("INSERT INTO tracks (id, path, analysed_at) VALUES (1,'/a.wav','now')")
+    con.commit()
+    auto_assign(con, 1, {"crate": "house", "band": "confident",
+                         "similarity": 0.8, "disputed": False})
+    assert disputed(con) == []
+
+
+def test_confirming_clears_a_dispute(tmp_path):
+    """Agreeing with it resolves the doubt - the row must leave the list."""
+    con = connect(tmp_path / "l.db")
+    con.execute("INSERT INTO tracks (id, path, analysed_at) VALUES (1,'/a.wav','now')")
+    con.commit()
+    auto_assign(con, 1, {"crate": "house", "band": "confident",
+                         "similarity": 0.8, "disputed": True})
+    correct(con, 1, mode="confirm")
+    assert disputed(con) == []
+
+
+def test_disputed_carries_the_crate_it_was_filed_into(tmp_path):
+    con = connect(tmp_path / "l.db")
+    con.execute("INSERT INTO tracks (id, path, analysed_at) VALUES (1,'/a.wav','now')")
+    con.commit()
+    auto_assign(con, 1, {"crate": "house", "band": "confident",
+                         "similarity": 0.8, "disputed": True})
+    assert disputed(con)[0]["crate"] == "house"

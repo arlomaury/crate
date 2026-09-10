@@ -164,6 +164,7 @@ def make_app(con, model_path, runner=None):
                         return self._send({
                             "uncertain": self._rows(crate_ops.uncertain(con)),
                             "unsorted": self._rows(crate_ops.unsorted(con)),
+                            "disputed": self._rows(crate_ops.disputed(con)),
                         })
 
                 if path.startswith("/api/preview/"):
@@ -240,6 +241,7 @@ def make_app(con, model_path, runner=None):
                     "crates": [{"name": r["name"], "count": r["n"]} for r in rows],
                     "uncertain": len(crate_ops.uncertain(con)),
                     "unsorted": len(crate_ops.unsorted(con)),
+                    "disputed": len(crate_ops.disputed(con)),
                 }
 
         def _crate(self, name):

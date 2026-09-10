@@ -292,6 +292,14 @@ function trackRow(t) {
  * (already filed), a genre never played (a discovery), and a file that could
  * not be read (a problem). Showing a decode failure as a new genre is a lie. */
 function kindOf(track, group) {
+  if (group === "disputed") {
+    // Filed with confidence, but the two independent signals wanted different
+    // crates. Measured: 25% of these are genuinely wrong, against 2.9% of the
+    // confident tracks where both agree.
+    return { k: "disputed", label: "Worth a second look",
+             why: track.crate ? `filed in ${track.crate}, but the two reads disagree`
+                              : "the two reads disagree" };
+  }
   if (group === "uncertain") {
     // The group header already explains what a close call is; repeating that
     // sentence on every row is noise. Show where it landed instead - that
@@ -311,6 +319,7 @@ async function buildReview() {
   const frag = document.createDocumentFragment();
   const rows = [
     ...data.uncertain.map((t) => ({ t, g: "uncertain" })),
+    ...(data.disputed || []).map((t) => ({ t, g: "disputed" })),
     ...data.unsorted.map((t) => ({ t, g: "unsorted" })),
   ];
 
@@ -324,17 +333,20 @@ async function buildReview() {
     return frag;
   }
 
-  const groups = { uncertain: [], unknown: [], failed: [] };
+  const groups = { uncertain: [], disputed: [], unknown: [], failed: [] };
   for (const r of rows) groups[kindOf(r.t, r.g).k].push(r);
 
   const notes = {
+    disputed: "Filed confidently, but the two independent reads of these "
+      + "disagree \u2014 and when they disagree, 1 in 4 turns out misfiled. "
+      + "The likeliest mistakes in the library, and the shortest list.",
     uncertain: "Already filed. Confirm the crate, or move it.",
     unknown: "Matched none of your crates — these may be worth a new one.",
     failed: "These files could not be analysed. Not a genre problem.",
   };
   const titles = { uncertain: "Close calls", unknown: "New sounds", failed: "Couldn’t read" };
 
-  for (const k of ["uncertain", "unknown", "failed"]) {
+  for (const k of ["disputed", "uncertain", "unknown", "failed"]) {
     if (!groups[k].length) continue;
     const g = el("div", "review-group");
     const h = el("h3", null, titles[k]);
@@ -391,7 +403,7 @@ function reviewRow(track, group) {
    * from the agreement. Only offered where there is a placement to agree
    * with; a track the model gave up on has none. */
   let ok = null;
-  if (group === "uncertain" && track.crate) {
+  if ((group === "uncertain" || group === "disputed") && track.crate) {
     ok = el("button", "confirm-btn", `Correct`);
     ok.title = `Yes, ${track.filename} belongs in ${track.crate}`;
     ok.addEventListener("click", async () => {
