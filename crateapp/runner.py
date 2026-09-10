@@ -22,7 +22,7 @@ from pathlib import Path
 
 import analyze
 from crateapp.classifier import Classifier, acapella_verdict
-from crateapp.crates import auto_assign
+from crateapp.crates import artist_crate, auto_assign
 from crateapp.db import LOCK, connect
 from crateapp.scanner import pending, scan
 from crateapp.worker import analyse_one, analyse_track, load_embedding, store_result
@@ -175,9 +175,30 @@ class Runner:
         # Acapellas are routed out before the genre question is asked - see
         # classifier.acapella_verdict for why the DSP verdict beats the model
         # here.
+        # Strongest signal first, and it is not an audio one: if the DJ has
+        # already filed this artist - consistently - that answers the question
+        # better than the model can. Measured 95.6% leave-one-out, against the
+        # model's 76.9%.
+        with LOCK:
+            by_artist, n_seen = artist_crate(con, trow["artist"])
         vocal = json.loads(arow["vocal"]) if arow and arow["vocal"] else None
         aca = acapella_verdict(vocal, classifier.crate_names())
-        if aca:
+
+        if by_artist and not aca:
+            model = classifier.classify(vec)
+            result = {"crate": by_artist, "band": "confident", "p": 1.0,
+                      "similarity": model.get("similarity", 1.0),
+                      "margin": 1.0,
+                      "scores": model.get("scores", []),
+                      "reason": f"you filed {n_seen} other track"
+                                f"{'' if n_seen == 1 else 's'} by this artist "
+                                f"in {by_artist}",
+                      # Worth a look when the audio says something else - the
+                      # rule is 95.6%, not 100%, and a remix credited to the
+                      # original artist is exactly how it goes wrong.
+                      "disputed": bool(model.get("crate")
+                                       and model["crate"] != by_artist)}
+        elif aca:
             result = {"crate": aca, "band": "confident", "similarity": 1.0,
                       "margin": 1.0, "p": 1.0,
                       "scores": [{"crate": aca, "p": 1.0}],

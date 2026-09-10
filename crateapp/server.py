@@ -198,6 +198,18 @@ def make_app(con, model_path, runner=None):
                 if self.path == "/api/correct":
                     return self._send(self._correct(payload))
 
+                if self.path == "/api/remove":
+                    track_id = self._require(payload, "track_id")
+                    with LOCK:
+                        name = crate_ops.remove_track(con, track_id)
+                    if name is None:
+                        raise ApiError("no such track", code=404)
+                    # Removing a track removes whatever it was teaching the
+                    # model, so the model has to be refitted - debounced, like
+                    # any other change to the labels.
+                    retrainer.schedule()
+                    return self._send({"removed": name})
+
                 if self.path == "/api/scan":
                     folder = self._require(payload, "folder")
                     with LOCK:

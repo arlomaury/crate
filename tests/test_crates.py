@@ -1,7 +1,7 @@
 import pytest
 from crateapp.db import connect
 from crateapp.crates import (ensure_crate, auto_assign, correct, disputed,
-                             uncertain, unsorted)
+                             remove_track, uncertain, unsorted)
 
 
 @pytest.fixture
@@ -262,3 +262,98 @@ def test_disputed_carries_the_crate_it_was_filed_into(tmp_path):
     auto_assign(con, 1, {"crate": "house", "band": "confident",
                          "similarity": 0.8, "disputed": True})
     assert disputed(con)[0]["crate"] == "house"
+
+
+# --------------------------------------------------------------- removing
+
+def test_removing_a_track_takes_it_out_of_every_crate(tmp_path):
+    con = connect(tmp_path / "l.db")
+    con.execute("INSERT INTO tracks (id, path, filename, analysed_at) "
+                "VALUES (1,'/a.wav','a.wav','now')")
+    con.commit()
+    correct(con, 1, "house", mode="move")
+    assert remove_track(con, 1) == "a.wav"
+    assert con.execute("SELECT count(*) FROM assignments").fetchone()[0] == 0
+    assert con.execute("SELECT count(*) FROM tracks").fetchone()[0] == 0
+
+
+def test_removing_a_track_stops_it_training_the_model(tmp_path):
+    """Its rows have to go with it, or a track the DJ deleted keeps teaching
+    the classifier from beyond the grave."""
+    from crateapp.classifier import training_set
+    from crateapp.worker import store_result
+    import numpy as np
+    con = connect(tmp_path / "l.db")
+    con.execute("INSERT INTO tracks (id, path, filename) VALUES (1,'/a.wav','a.wav')")
+    store_result(con, 1, {"bpm": 128.0}, np.ones(8, dtype=np.float32))
+    correct(con, 1, "house", mode="move")
+    assert training_set(con)[0] == [1]
+    remove_track(con, 1)
+    assert training_set(con)[0] == []
+    assert con.execute("SELECT count(*) FROM embeddings").fetchone()[0] == 0
+    assert con.execute("SELECT count(*) FROM analysis").fetchone()[0] == 0
+
+
+def test_removing_an_unknown_track_says_so(tmp_path):
+    con = connect(tmp_path / "l.db")
+    assert remove_track(con, 999) is None
+
+
+def test_removing_never_touches_the_file_on_disk(tmp_path):
+    """The standing invariant: source audio is never modified, moved or
+    deleted. Removing is about the DJ's record of a track, not the track."""
+    f = tmp_path / "real.wav"
+    f.write_bytes(b"RIFFsomething")
+    con = connect(tmp_path / "l.db")
+    con.execute("INSERT INTO tracks (id, path, filename) VALUES (1,?,'real.wav')",
+                (str(f),))
+    con.commit()
+    remove_track(con, 1)
+    assert f.exists() and f.read_bytes() == b"RIFFsomething"
+
+
+# ----------------------------------------------------- the artist shortcut
+
+def test_normalise_artist_collapses_credits():
+    from crateapp.crates import normalise_artist
+    n = normalise_artist
+    assert n("Sammy Virji") == n("Sammy Virji, Issey Cross") == n("sammy  virji")
+    assert n("MPH & Dread MC") == n("MPH")
+    assert n("Four Tet feat. Nelly Furtado") == n("Four Tet")
+    assert n("") is None and n(None) is None
+
+
+def test_artist_crate_uses_only_the_djs_own_filing(tmp_path):
+    """Measured leave-one-out, same-artist-same-crate is right 95.6% of the
+    time - and 97.3% on house vs tech, which no amount of audio analysis
+    separates above ~74%. But only the DJ's filing counts; the model's own
+    guesses about an artist say nothing."""
+    from crateapp.crates import artist_crate
+    con = connect(tmp_path / "l.db")
+    con.execute("INSERT INTO tracks (id, path, artist) VALUES (1,'/a.wav','mph')")
+    con.execute("INSERT INTO tracks (id, path, artist) VALUES (2,'/b.wav','mph')")
+    con.commit()
+    auto_assign(con, 2, {"crate": "house", "band": "confident", "similarity": .9})
+    assert artist_crate(con, "MPH") == (None, 0), "an auto guess is not evidence"
+    correct(con, 1, "UKG", mode="move")
+    assert artist_crate(con, "MPH, Dread MC") == ("UKG", 1)
+
+
+def test_artist_crate_declines_when_the_dj_was_inconsistent(tmp_path):
+    """Drake is filed in both house and rap - originals against edits. Those
+    artists are genuinely ambiguous, so the rule must decline, not pick."""
+    from crateapp.crates import artist_crate
+    con = connect(tmp_path / "l.db")
+    for i, crate in ((1, "house"), (2, "rap")):
+        con.execute("INSERT INTO tracks (id, path, artist) VALUES (?,?,'drake')",
+                    (i, f"/{i}.wav"))
+        con.commit()
+        correct(con, i, crate, mode="move")
+    assert artist_crate(con, "Drake") == (None, 0)
+
+
+def test_artist_crate_is_silent_without_a_tag(tmp_path):
+    from crateapp.crates import artist_crate
+    con = connect(tmp_path / "l.db")
+    assert artist_crate(con, None) == (None, 0)
+    assert artist_crate(con, "Nobody At All") == (None, 0)

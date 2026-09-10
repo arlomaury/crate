@@ -745,3 +745,22 @@ button.confirm-btn:hover:not(:disabled) { background: rgba(47,109,79,.36); }
    rather than a warning colour: these are worth a look, not a failure. */
 .pill.disputed { background: rgba(110,143,255,.16); color: var(--accent); }
 .r-why.disputed { color: var(--accent); }
+
+/* Removing cannot be undone, so it never looks like the buttons that can.
+   Muted until armed, then unmistakable. */
+button.remove-btn {
+  margin-left: 4px;
+  color: var(--ink-3);
+  background: transparent;
+  border: 1px solid var(--line);
+}
+button.remove-btn:hover:not(:disabled) {
+  color: var(--failed);
+  border-color: var(--failed);
+}
+button.remove-btn.armed {
+  background: rgba(176,104,104,.22);
+  border-color: var(--failed);
+  color: #e9c4c4;
+  font-weight: 550;
+}

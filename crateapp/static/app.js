@@ -442,6 +442,7 @@ function reviewRow(track, group) {
 
   if (ok) act.append(ok);
   act.append(sel, fresh, ask, move, also);
+  act.append(removeControl(track, () => { row.style.opacity = "0"; }));
   // The controls live inside the row; without this, choosing a crate or
   // pressing Move would also fire the row's select/play handlers.
   act.addEventListener("click", (e) => e.stopPropagation());
@@ -1119,6 +1120,50 @@ function renderPanel() {
 
 const panelKey = (t) => `${t.id != null ? t.id : ""}|${t.filename}`;
 
+/* Removing a track from the catalogue.
+ *
+ * Two steps, because it cannot be undone and the button sits next to ones
+ * that can. The second click is a different word in a different colour, so
+ * nobody double-clicks their way through it by muscle memory.
+ *
+ * It removes the DJ's record of a track, never the file: a sample, an SFX,
+ * an interview clip - things that live in the music folder but are not music
+ * they will ever play. */
+function removeControl(track, after) {
+  const b = el("button", "remove-btn", "Remove");
+  b.title = "Take this out of Crate. The file on disk is not touched.";
+  let armed = false;
+  b.addEventListener("click", async () => {
+    if (!armed) {
+      armed = true;
+      b.textContent = "Really remove?";
+      b.classList.add("armed");
+      setTimeout(() => {
+        if (!armed) return;
+        armed = false; b.textContent = "Remove"; b.classList.remove("armed");
+      }, 4000);
+      return;
+    }
+    b.disabled = true;
+    try {
+      const r = await api.post("/api/remove", { track_id: track.id });
+      status(`Removed ${r.removed} from Crate. The file is still on disk.`);
+      if (player.trackId === track.id) player.stop();
+      if (state.panelTrack && state.panelTrack.id === track.id) {
+        state.panelTrack = null;
+        state.shownKey = null;
+      }
+      if (after) after();
+      await refresh();
+    } catch (e) {
+      fail(e.message);
+      b.disabled = false; armed = false;
+      b.textContent = "Remove"; b.classList.remove("armed");
+    }
+  });
+  return b;
+}
+
 /* File the selected track by hand.
  *
  * These live in the panel rather than on every row: the row list is a
@@ -1200,6 +1245,7 @@ function panelActions(track) {
   }
 
   box.append(sel, fresh, move, add);
+  box.append(removeControl(track));
   return box;
 }
 

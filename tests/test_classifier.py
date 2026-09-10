@@ -57,12 +57,24 @@ def test_crate_names_are_listed(model):
 
 
 def test_the_real_shipped_model_loads():
-    """The shipped model's crate names ARE the app's crate names - a mismatch
-    means classify() files tracks into crates the UI never shows. These are
-    the DJ's own folder names, not display labels of our choosing."""
+    """Structural invariants of the real model file.
+
+    Deliberately NOT a frozen list of crate names: the DJ creates crates as
+    they work (they have added 'rock' and 'more chill' since), so pinning the
+    names made this test fail on their normal use of the app rather than on
+    any defect.
+
+    What must hold is that every crate the trained layer can predict also has
+    a centroid - otherwise classify() can name a crate it has no distance
+    measurement for, and the "is this like anything I own" check silently
+    reads from the wrong row."""
     c = Classifier("crate_model.json")
-    assert sorted(c.crate_names()) == [
-        "DUBSTEP", "UKG", "afro", "house", "pop", "rap", "tech", "vocals"]
+    assert c.crate_names(), "the shipped model has no crates"
+    assert c.trained(), "the shipped model has no trained layer"
+    missing = set(c.linear["classes"]) - set(c.crate_names())
+    assert not missing, f"predictable crates with no centroid: {missing}"
+    assert c.linear["w"].shape[0] == len(c.linear["classes"])
+    assert c.linear["w"].shape[1] == c.centroids.shape[1]
 
 
 # ------------------------------------------- crates the DJ treats as alike

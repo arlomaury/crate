@@ -89,6 +89,14 @@ def migrate(con):
     at all to a table that already exists - so a new column has to be added
     explicitly or every existing library breaks on upgrade.
     """
+    cols = {r["name"] for r in con.execute("PRAGMA table_info(tracks)")}
+    if "artist" not in cols:
+        # Read from the file's own tags. Not used to guess a genre from words
+        # - that is a known dead end - but to ask "have I already filed this
+        # artist", which the DJ answers consistently: measured leave-one-out,
+        # same-artist-same-crate is right 95.6% of the time.
+        con.execute("ALTER TABLE tracks ADD COLUMN artist TEXT")
+
     have = {r["name"] for r in con.execute("PRAGMA table_info(assignments)")}
     if "disputed" not in have:
         # Set when two independent signals - the trained layer and the plain

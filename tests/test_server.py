@@ -535,3 +535,23 @@ def test_flush_is_reachable_from_the_server_object(tmp_path):
     Handler = make_app(con, tmp_path / "m.json")
     assert hasattr(Handler, "retrainer")
     assert callable(Handler.retrainer.flush)
+
+
+def test_remove_over_http(tmp_path):
+    con = connect(tmp_path / "r.db")
+    con.execute("INSERT INTO tracks (id, path, filename, analysed_at) "
+                "VALUES (1,'/a.wav','a.wav','now')")
+    con.commit()
+    from crateapp.crates import correct as _c
+    _c(con, 1, "house", mode="move")
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), make_app(con, tmp_path / "m.json"))
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        base = f"http://127.0.0.1:{srv.server_port}"
+        assert post(base + "/api/remove", {"track_id": 1})["removed"] == "a.wav"
+        assert get(base + "/api/crate/house")["tracks"] == []
+        with pytest.raises(urllib.error.HTTPError) as e:
+            post(base + "/api/remove", {"track_id": 1})
+        assert e.value.code == 404
+    finally:
+        srv.shutdown()
