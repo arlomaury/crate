@@ -44,6 +44,9 @@ and **declined** — do not add them without asking again.
 | Nearest-centroid classification | Assumes each genre is a spherical blob around its mean. Measured 72.1% against logistic regression's 76.1%, and its precision was the visible failure: DUBSTEP 0.800, UK Garage 0.385. Kept only as an out-of-distribution signal (see §3). |
 | Discogs400 head output as classifier features | 71.7% alone, no gain concatenated with the embedding. That head is itself a linear layer on the same embedding, so it carries strictly less information. |
 | Tempo features, PCA (32–256 dims), RBF SVM | +0.2% (noise), worse at every PCA size, 73.5% respectively. |
+| **Groove / beat-synchronous rhythm features** | The EDM subgenre literature (arXiv:2110.08862) says rhythm features dominate this task, so a 52-dim beat-synchronous band-energy profile was built (`groove_experiment.py`). It carries real signal alone — 62.9% on house-vs-tech against a 54.8% baseline — but adds **nothing** on top of the embedding (74.9% → 74.2%). The embedding already knows what groove would tell it. |
+| **Discogs labels as a targeted house/tech signal** | The taxonomy has explicit House / Tech House labels and uses them well (says "Tech House" → right 47 of 53 times). A single House-minus-TechHouse axis appeared to hit 77.7% — but that threshold was fitted and scored on the same data. Under repeated cross-validation it is 74.1% ±0.5 against the embedding's 73.5% ±1.1: the same, within noise. |
+| **Collecting more labels to fix accuracy** | Measured learning curve: 130 labels → 67.7%, 364 → 76.5%, 520 → 76.9%. It has plateaued; +43% more labels bought 0.4 points. Labelling more helps only the *individually starved* crates (afro at 20, UKG at 25), not overall accuracy. |
 | `class_weight="balanced"` | Scores higher overall (77.0%) but buys recall on small crates by giving up precision on them (afro 1.000 → 0.619, DUBSTEP 1.000 → 0.958). Wrong given the severity ruling above. |
 | Genre keyword matching on filenames/titles | "bass", "house", "rock" appear across unrelated genres. **The tool never reads filenames to decide genre.** |
 | Downloaded standalone HTML calling APIs | Local HTML cannot call external APIs. Architectural dead end. |
@@ -61,6 +64,8 @@ and **declined** — do not add them without asking again.
 | `crateapp/` | The app: local server, sorting pipeline, classifier, set builder, UI. |
 | `eval_genre.py` | **Compares classifier methods under stratified k-fold CV and prints the calibration tables the thresholds come from.** Run this before changing the classifier. |
 | `tune_genre.py` | Sweeps regularisation/PCA/class weights, and measures the house-vs-tech ceiling. |
+| `groove_experiment.py` | Extracts beat-synchronous rhythm features (cached at `~/.crate/groove.npz`) and tests whether groove separates house from tech house. It does not — see the dead-ends table. |
+| `house_vs_tech.py` | Tests every available signal on the one distinction that is left, under repeated CV. |
 | `retrain.py` | Resets ground truth from the DJ's Rekordbox export and retrains. Run after re-exporting `rek.xml`. |
 | `crate_model.json` | Trained weights + centroids + provenance. |
 | `crate.command` | Double-click launcher. `~/Desktop/Crate.app` wraps it. |
@@ -115,10 +120,31 @@ precision, then -> now:   DUBSTEP 0.800 -> 1.000
 **house vs tech house is 69% of all remaining error** (81 of 117), between two
 crates holding 280 of the 452 labels. Merging them takes the same model to
 **90.5%** — so the rest of the taxonomy is close to solved and this one
-distinction is nearly all that is left. It may not be separable from audio at
-all: the DJ's filing there follows Beatport's tagging, a labelling convention
-rather than a property of the sound. **Merging them is an open product
-question — ask, do not decide.**
+distinction is nearly all that is left.
+
+It is now well established that this pair is close to unlearnable from audio
+here. Three unrelated signal families were measured on it in isolation, under
+repeated cross-validation:
+
+```
+always guess the bigger crate     54.8%
+embedding (what ships)            73.5%  +/-1.1
+Discogs taxonomy labels           74.1%  +/-0.5
+groove / beat-synchronous rhythm  60.4%  +/-1.1
+all three together                73.7%  +/-0.5
+```
+
+Three independent views of the audio agree on roughly 74%, and combining them
+adds nothing — which points at the labels rather than the method. The
+published literature agrees: tech house is *defined* as a blend of techno
+elements with progressive-house harmonies and grooves, and academic EDM
+subgenre classifiers report 48–59% on comparable tasks. The DJ's own filing
+here follows Beatport's tagging, which is a convention rather than a property
+of the sound.
+
+**Merging them is an open product question — ask, do not decide.** Anyone
+planning to "fix" this pair with a better model should read the dead-ends
+table first and expect to be disappointed.
 
 Threshold trade-off (family-summed probability), and why 0.65:
 
@@ -215,15 +241,26 @@ are separate rows now.
 
 ## 6. Outstanding, in priority order
 
-1. **Work the review queue** (~200 tracks). Every **Correct** click is one
-   click and becomes training data. This is the highest-value thing the DJ can
-   do, and the model improves as they go.
-2. **Decide the house/tech question** (§3). Merging is worth ~14 accuracy
-   points; it is their taxonomy, not ours.
-3. **Export and load onto a USB / CDJ** with the re-sorted crates.
-4. More labels for the thin crates — afro (19 distinct), UKG (24), rap (20),
-   DUBSTEP (25). Recall is limited by label count, not method.
-5. `scan()` still holds the DB lock for a whole folder scan.
+1. **Work "Worth a second look" first** (49 tracks). These are filed
+   confidently but the two independent signals disagree, and measured, 25% of
+   them are genuinely misfiled against 2.9% elsewhere. Shortest list, highest
+   yield — and the only way these errors ever surface, since the model is sure.
+2. **Then the close calls** (~106). Every **Correct** is one click and becomes
+   training data.
+3. **Decide the house/tech question** (§3). Merging is worth ~14 accuracy
+   points; it is their taxonomy, not ours. Note the evidence says no model
+   will fix it.
+4. **Export and load onto a USB / CDJ** with the re-sorted crates.
+5. More labels **only for afro (20) and UKG (25)** — those two crates are
+   individually starved (afro recall 0.30, UKG 0.64). Overall accuracy has
+   plateaued, so labelling anything else is not worth the evening.
+6. An untested idea worth one experiment if the above is exhausted: swap
+   Discogs-EffNet for **MuQ** (`pip install muq`, PyTorch, CPU-capable, needs
+   24kHz audio), the current state of the art on music genre benchmarks. It
+   would mean re-embedding the library and a ~2GB dependency, and it is
+   unproven on *this* distinction — expect it to help the taxonomy generally
+   rather than rescue house-vs-tech.
+7. `scan()` still holds the DB lock for a whole folder scan.
 
 ## 7. Possible improvements (not requested — do not build unasked)
 
