@@ -480,3 +480,35 @@ def test_confirming_an_unfiled_track_is_a_clean_error(tmp_path):
         assert e.value.code == 400
     finally:
         srv.shutdown()
+
+
+def test_stop_asks_the_runner_to_stop(tmp_path):
+    """A library run is hours long. Without this the only way to call one off
+    was killing the server."""
+    class FakeRunner:
+        def __init__(self): self.stopped = False
+        def stop(self): self.stopped = True
+        def status(self): return {"running": True}
+    con = connect(tmp_path / "s.db")
+    r = FakeRunner()
+    srv = ThreadingHTTPServer(("127.0.0.1", 0),
+                              make_app(con, tmp_path / "m.json", runner=r))
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        base = f"http://127.0.0.1:{srv.server_port}"
+        assert post(base + "/api/stop", {})["stopping"] is True
+        assert r.stopped
+    finally:
+        srv.shutdown()
+
+
+def test_stop_without_a_runner_is_a_clean_503(tmp_path):
+    con = connect(tmp_path / "s.db")
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), make_app(con, tmp_path / "m.json"))
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        with pytest.raises(urllib.error.HTTPError) as e:
+            post(f"http://127.0.0.1:{srv.server_port}/api/stop", {})
+        assert e.value.code == 503
+    finally:
+        srv.shutdown()

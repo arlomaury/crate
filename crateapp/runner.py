@@ -4,12 +4,13 @@ Nothing else in the app calls classify() or auto_assign() - this is where that
 finally happens, in a background daemon thread so the HTTP server stays
 responsive while a library-sized run (930 tracks, hours) is in progress.
 
-Threading: server.py's HTTPServer is single-threaded, and the whole app shares
-one sqlite3 connection opened with check_same_thread=False. This runner adds a
-second thread that also touches that connection, so every access to it - here
+Threading: server.py serves on a ThreadingHTTPServer (one thread per request,
+so streaming a track does not stall the UI), and the whole app shares one
+sqlite3 connection opened with check_same_thread=False. This runner adds
+another thread that also touches that connection, so every access to it - here
 and in server.py - is guarded by the shared crateapp.db.LOCK. The lock is held
-per unit of work (one scan, one track's writes), never for the whole run, so a
-run in progress does not freeze the UI.
+per unit of work (one scan, one track's writes), never for the whole run nor
+across the 4s of audio analysis, so a run in progress does not freeze the UI.
 
 `self._status` is a separate concern from the DB lock: it is an in-process
 dict read by the server thread and written by the runner thread, so it gets

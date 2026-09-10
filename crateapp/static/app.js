@@ -112,6 +112,19 @@ function toolbar() {
   });
   bar.append(start);
 
+  // Only meaningful mid-run, so it is only present mid-run. A library-sized
+  // run is hours long and there was no way to call it off short of killing
+  // the server.
+  const stop = el("button", "hidden", "Stop"); stop.id = "stop";
+  stop.addEventListener("click", async () => {
+    stop.disabled = true;
+    try {
+      await api.post("/api/stop", {});
+      status("Stopping after the current track…");
+    } catch (e) { fail(e.message); stop.disabled = false; }
+  });
+  bar.append(stop);
+
   const x1 = el("button", null, "Export XML");
   x1.addEventListener("click", () => doExport("rekordbox"));
   const x2 = el("button", null, "Export folders");
@@ -1378,6 +1391,11 @@ async function poll() {
     renderPanel();
     const running = state.progress && state.progress.running;
     const b = $("#start"); if (b) b.disabled = !!running;
+    const sb = $("#stop");
+    if (sb) {
+      sb.classList.toggle("hidden", !running);
+      if (running) sb.disabled = false;
+    }
     if (running) {
       Object.assign(state, await api.get("/api/state"));
       renderSidebar();

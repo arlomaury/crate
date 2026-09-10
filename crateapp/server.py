@@ -208,6 +208,14 @@ def make_app(con, model_path, runner=None):
                 if self.path == "/api/start":
                     return self._send(self._start(payload))
 
+                if self.path == "/api/stop":
+                    if runner is None:
+                        raise ApiError("no runner configured", code=503)
+                    # Asks the pipeline to stop after the track in progress;
+                    # it does not abandon that track's work half-written.
+                    runner.stop()
+                    return self._send({"stopping": True})
+
                 if self.path == "/api/set":
                     return self._send(self._build_set(payload))
 
