@@ -333,6 +333,10 @@ async function buildReview() {
     return frag;
   }
 
+  // Teaching a tag is a different kind of act from correcting a track: one
+  // decision settles every other track carrying that tag, so it leads.
+  if (data.tag_gaps && data.tag_gaps.length) frag.append(tagGapGroup(data.tag_gaps));
+
   const groups = { uncertain: [], disputed: [], unknown: [], failed: [] };
   for (const r of rows) groups[kindOf(r.t, r.g).k].push(r);
 
@@ -356,6 +360,44 @@ async function buildReview() {
     frag.append(g);
   }
   return frag;
+}
+
+/* The genre tag written into a file decides more tracks than everything else
+ * combined - but only once it has been taught, which takes two tracks
+ * pointing the same way. Until then every track carrying it falls through to
+ * the audio model, about 15 points worse. So: the tags doing nothing, ranked
+ * by how many tracks each would settle. */
+function tagGapGroup(gaps) {
+  const g = el("div", "review-group tag-gaps");
+  const h = el("h3", null, "Teach a tag");
+  const total = gaps.reduce((a, x) => a + x.would_unlock, 0);
+  h.append(el("span", "pill tagged", String(gaps.length)));
+  g.append(h, el("p", "note",
+    `File one track from each of these and every other track carrying the `
+    + `same tag files itself. These ${gaps.length} cover ${total} tracks.`));
+
+  for (const x of gaps) {
+    const row = el("div", "gap-row");
+    const left = el("div", "gap-main");
+    const t = el("div", "gap-tag");
+    t.append(el("span", "gap-quote", `\u201c${x.tag}\u201d`),
+             el("span", "gap-count", `settles ${x.would_unlock} track${x.would_unlock === 1 ? "" : "s"}`));
+    left.append(t, el("div", "gap-file", x.filename));
+    if (x.filed_so_far) {
+      left.append(el("div", "gap-progress",
+        `you have filed ${x.filed_so_far} \u2014 one more decides it`));
+    }
+    row.append(left);
+
+    const open = el("button", "ghost", "Show me one");
+    open.addEventListener("click", async () => {
+      await selectTrack(x.track_id);
+      $("#panel").scrollIntoView({ behavior: "smooth", block: "nearest" });
+    });
+    row.append(open);
+    g.append(row);
+  }
+  return g;
 }
 
 function reviewRow(track, group) {

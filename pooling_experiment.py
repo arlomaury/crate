@@ -156,6 +156,16 @@ def main():
     keep = np.sort(first)
     tids = [tids[i] for i in keep]
     y = y[keep]
+
+    # A crate with fewer members than folds cannot be cross-validated at all,
+    # and the DJ has crates with one track in them.
+    counts = Counter(y)
+    usable = np.array([counts[c] >= 5 for c in y])
+    if not usable.all():
+        thin = sorted({c for c in y[~usable]})
+        print(f"(too few to cross-validate, dropped: {', '.join(thin)})")
+        tids = [t for t, u in zip(tids, usable) if u]
+        y = y[usable]
     print(f"{len(y)} distinct recordings\n")
 
     HT = {"house", "tech"}

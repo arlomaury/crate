@@ -764,3 +764,25 @@ button.remove-btn.armed {
   color: #e9c4c4;
   font-weight: 550;
 }
+
+/* Teaching a tag settles many tracks at once, so it reads as an opportunity
+   rather than another chore in the queue. */
+.review-group.tag-gaps .note { color: var(--ink-2); }
+.pill.tagged { background: rgba(110,207,155,.16); color: #6ecf9b; }
+.gap-row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 9px 12px; margin-bottom: 5px;
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-left: 2px solid #2f6d4f;
+  border-radius: 8px;
+}
+.gap-main { flex: 1; min-width: 0; }
+.gap-tag { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.gap-quote { font-weight: 550; color: var(--ink); }
+.gap-count { font-size: 11px; color: #6ecf9b; }
+.gap-file {
+  font-size: 11px; color: var(--ink-3); margin-top: 2px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.gap-progress { font-size: 11px; color: var(--uncertain); margin-top: 2px; }

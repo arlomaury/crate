@@ -46,6 +46,7 @@ and **declined** — do not add them without asking again.
 | Tempo features, PCA (32–256 dims), RBF SVM | +0.2% (noise), worse at every PCA size, 73.5% respectively. |
 | **Groove / beat-synchronous rhythm features** | The EDM subgenre literature (arXiv:2110.08862) says rhythm features dominate this task, so a 52-dim beat-synchronous band-energy profile was built (`groove_experiment.py`). It carries real signal alone — 62.9% on house-vs-tech against a 54.8% baseline — but adds **nothing** on top of the embedding (74.9% → 74.2%). The embedding already knows what groove would tell it. |
 | **Discogs labels as a targeted house/tech signal** | The taxonomy has explicit House / Tech House labels and uses them well (says "Tech House" → right 47 of 53 times). A single House-minus-TechHouse axis appeared to hit 77.7% — but that threshold was fitted and scored on the same data. Under repeated cross-validation it is 74.1% ±0.5 against the embedding's 73.5% ±1.1: the same, within noise. |
+| **Pooling the embedding differently** | The stored vector is `emb.mean(axis=0)` over the whole track, which averages the intro and outro in with the groove — so mean+std, percentiles, max, and embedding *only the drop section* were all tried (`pooling_experiment.py`). The shipped mean wins or ties every one: mean 76.5%, percentiles 76.6% (3× the dimensions), mean+std 76.2%, drop-only **73.3%** — worse. |
 | **Collecting more labels to fix accuracy** | Measured learning curve: 130 labels → 67.7%, 364 → 76.5%, 520 → 76.9%. It has plateaued; +43% more labels bought 0.4 points. Labelling more helps only the *individually starved* crates (afro at 20, UKG at 25), not overall accuracy. |
 | `class_weight="balanced"` | Scores higher overall (77.0%) but buys recall on small crates by giving up precision on them (afro 1.000 → 0.619, DUBSTEP 1.000 → 0.958). Wrong given the severity ruling above. |
 | Genre keyword matching on filenames/titles | "bass", "house", "rock" appear across unrelated genres. **The tool never reads filenames to decide genre.** |
@@ -66,6 +67,7 @@ and **declined** — do not add them without asking again.
 | `tune_genre.py` | Sweeps regularisation/PCA/class weights, and measures the house-vs-tech ceiling. |
 | `groove_experiment.py` | Extracts beat-synchronous rhythm features (cached at `~/.crate/groove.npz`) and tests whether groove separates house from tech house. It does not — see the dead-ends table. |
 | `house_vs_tech.py` | Tests every available signal on the one distinction that is left, under repeated CV. |
+| `pooling_experiment.py` | Tests whether a different reduction of the per-frame embeddings beats the mean. It does not — see the dead-ends table. Cache at `~/.crate/pooling.npz`. |
 | `retrain.py` | Resets ground truth from the DJ's Rekordbox export and retrains. Run after re-exporting `rek.xml`. |
 | — | Removing a track (`crates.remove_track`, `POST /api/remove`) drops the DJ's *record* of it and **never the file**. Two clicks in the UI; there is a test asserting the bytes on disk survive. |
 | `crate_model.json` | Trained weights + centroids + provenance. |
@@ -297,15 +299,16 @@ are separate rows now.
 
 ## 6. Outstanding, in priority order
 
-1. **Work "Worth a second look" first** (49 tracks). These are filed
+1. **Teach the tags** — the review queue now leads with "Teach a tag"
+   (`crates.tag_gaps`). Filing ONE track from each of 8 tags settles ~84
+   others, because the tag rule then applies to all of them. Highest return
+   on the DJ's attention by a wide margin.
+2. **Work "Worth a second look"** (~129 tracks). These are filed
    confidently but the two independent signals disagree, and measured, 25% of
    them are genuinely misfiled against 2.9% elsewhere. Shortest list, highest
    yield — and the only way these errors ever surface, since the model is sure.
-2. **Then the close calls** (~106). Every **Correct** is one click and becomes
+3. **Then the close calls** (~84). Every **Correct** is one click and becomes
    training data.
-3. **Decide the house/tech question** (§3). Merging is worth ~14 accuracy
-   points; it is their taxonomy, not ours. Note the evidence says no model
-   will fix it.
 4. **Export and load onto a USB / CDJ** with the re-sorted crates.
 5. More labels **only for afro (20) and UKG (25)** — those two crates are
    individually starved (afro recall 0.30, UKG 0.64). Overall *audio* accuracy

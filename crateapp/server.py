@@ -165,6 +165,7 @@ def make_app(con, model_path, runner=None):
                             "uncertain": self._rows(crate_ops.uncertain(con)),
                             "unsorted": self._rows(crate_ops.unsorted(con)),
                             "disputed": self._rows(crate_ops.disputed(con)),
+                            "tag_gaps": crate_ops.tag_gaps(con),
                         })
 
                 if path.startswith("/api/preview/"):

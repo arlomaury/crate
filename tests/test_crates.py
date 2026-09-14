@@ -491,3 +491,39 @@ def test_tag_purity_ignores_acapellas(tmp_path):
     crate, n, purity = tag_crate(con, "Hip-Hop/Rap")
     assert crate == "rap", "the acapellas must not outvote the rap tracks"
     assert n == 3 and purity == 1.0
+
+
+def test_tag_gaps_ranks_by_how_many_tracks_it_would_settle(tmp_path):
+    """Teaching a tag is worth more than correcting a track: one decision
+    settles every other track carrying it. So the richest tag leads."""
+    from crateapp.crates import tag_gaps
+    con = connect(tmp_path / "l.db")
+    tid = 0
+    for tag, n in (("big tag", 5), ("small tag", 2)):
+        for _ in range(n):
+            tid += 1
+            con.execute("INSERT INTO tracks (id, path, filename, genre_tag) "
+                        "VALUES (?,?,?,?)", (tid, f"/{tid}.wav", f"{tid}.wav", tag))
+            con.commit()
+            auto_assign(con, tid, {"crate": "house", "band": "confident",
+                                   "similarity": 0.8})
+    gaps = tag_gaps(con)
+    assert [g["tag"] for g in gaps] == ["big tag", "small tag"]
+    assert gaps[0]["would_unlock"] == 5
+    assert gaps[0]["track_id"] is not None, "must name a track to act on"
+
+
+def test_a_tag_that_already_maps_is_not_a_gap(tmp_path):
+    """Once it decides something it is no longer worth the DJ's attention."""
+    from crateapp.crates import tag_gaps
+    con = connect(tmp_path / "l.db")
+    for i in (1, 2):
+        con.execute("INSERT INTO tracks (id, path, filename, genre_tag) "
+                    "VALUES (?,?,?,'known')", (i, f"/{i}.wav", f"{i}.wav"))
+        con.commit()
+        correct(con, i, "tech", mode="move")
+    con.execute("INSERT INTO tracks (id, path, filename, genre_tag) "
+                "VALUES (9,'/9.wav','9.wav','known')")
+    con.commit()
+    auto_assign(con, 9, {"crate": "tech", "band": "confident", "similarity": .9})
+    assert [g["tag"] for g in tag_gaps(con)] == []

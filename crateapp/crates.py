@@ -263,6 +263,51 @@ def tag_crate(con, genre_tag):
     return best["name"], total, round(purity, 3)
 
 
+def tag_gaps(con, limit=8):
+    """Tags that would file a lot of tracks, if the DJ filed a couple first.
+
+    The genre tag decides more tracks than everything else combined, but only
+    once it has been taught: two tracks, pointing the same way. Until then
+    every track carrying that tag falls through to the audio model, which is
+    ~15 points worse.
+
+    So this finds the tags doing nothing and ranks them by how many tracks
+    each would settle. On this library "minimal / deep tech" sits on 34
+    unfiled tracks and has never been filed once - two minutes of the DJ's
+    attention against 34 tracks sorted properly.
+
+    Returns [{tag, would_unlock, filed_so_far, track_id, filename}], richest
+    first, with one representative track to act on.
+    """
+    rows = con.execute(
+        "SELECT t.genre_tag tag, count(*) n FROM tracks t "
+        "JOIN assignments a ON a.track_id = t.id AND a.source = 'auto' "
+        "WHERE t.genre_tag IS NOT NULL AND trim(t.genre_tag) != '' "
+        "GROUP BY lower(t.genre_tag) ORDER BY n DESC").fetchall()
+
+    out = []
+    for r in rows:
+        if tag_crate(con, r["tag"])[0]:
+            continue                      # already teaching us something
+        filed = con.execute(
+            "SELECT count(*) n FROM assignments a JOIN tracks t "
+            "ON t.id = a.track_id WHERE a.source='human' "
+            "AND lower(t.genre_tag) = ?", (r["tag"].lower(),)).fetchone()["n"]
+        pick = con.execute(
+            "SELECT t.id, t.filename FROM tracks t "
+            "JOIN assignments a ON a.track_id = t.id AND a.source = 'auto' "
+            "WHERE lower(t.genre_tag) = ? ORDER BY t.id LIMIT 1",
+            (r["tag"].lower(),)).fetchone()
+        if pick is None:
+            continue
+        out.append({"tag": r["tag"], "would_unlock": r["n"],
+                    "filed_so_far": filed, "track_id": pick["id"],
+                    "filename": pick["filename"]})
+        if len(out) >= limit:
+            break
+    return out
+
+
 def who_made_it(con, track_id):
     """`(key, crate, n)` - the person whose filing decides this track.
 
