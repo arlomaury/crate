@@ -90,6 +90,20 @@ def migrate(con):
     explicitly or every existing library breaks on upgrade.
     """
     cols = {r["name"] for r in con.execute("PRAGMA table_info(tracks)")}
+    if "genre_tag" not in cols:
+        # The genre written into the file by whoever sold or ripped it -
+        # Beatport and the like. Measured on this library it predicts the DJ's
+        # own filing 90.6% of the time and 98.2% on house vs tech house, which
+        # no amount of audio analysis managed above ~76%. It is present on 95%
+        # of their tracks.
+        con.execute("ALTER TABLE tracks ADD COLUMN genre_tag TEXT")
+
+    if "remixer" not in cols:
+        # A remix is the remixer's record - their drums, their bassline, their
+        # genre - but the artist tag names the original act. Stored separately
+        # so the filing rule can prefer whichever actually made this version.
+        con.execute("ALTER TABLE tracks ADD COLUMN remixer TEXT")
+
     if "artist" not in cols:
         # Read from the file's own tags. Not used to guess a genre from words
         # - that is a known dead end - but to ask "have I already filed this

@@ -102,32 +102,58 @@ exactly that. **This is what lets the app spot a genuinely new sound** rather
 than forcing every track into an existing crate — an explicit user
 requirement.
 
-### §3a. Who made it beats what it sounds like
+### §3a. The decision order, and why it is mostly not audio
 
-The decision order is: **artist → acapella → audio model.**
+**acapella → genre tag → who made it → audio model.** Measured held out on
+530 distinct labelled recordings:
 
-Measured leave-one-out across 659 labelled tracks whose artist has another
-labelled track, "same artist, same crate" is right **95.6%** of the time, and
-**97.3%** on house vs tech house — the pair three independent audio signals
-could not separate above ~74%. Of 276 artists with more than one labelled
-track, only 9 are split across crates, and those are exactly the ambiguous
-ones (Drake in house and rap, Rihanna across house/pop/vocals — originals
-against edits).
+```
+audio model alone                        76.6%
+acapella -> person -> audio              77.4%
+acapella -> tag -> person -> audio       92.3%   <- ships
+   ...on house vs tech house             98.2%   (audio alone: 75.4%)
+```
 
-`crates.artist_crate` applies it, and only when the DJ's own filing for that
-artist is **unanimous**; a split artist is genuinely ambiguous and it declines
-rather than picking a side. Where the audio model disagrees with the artist,
-the track is marked `disputed` — the rule is 95.6%, not 100%, and a remix
-credited to the original artist is exactly how it goes wrong.
+**The genre tag written into the file decides 88% of tracks.** Whoever sold or
+ripped the track wrote "Tech House" or "UK Garage / Bassline" into it, and the
+DJ files by that tag - which is why the audio never recovered the house/tech
+split and why the tag recovers it at 98%. Present on 95% of their labelled
+tracks (only 32% of the unfiled ones, which is the current limit).
 
-**This is not the filename-keyword dead end.** That guessed a genre from words
-in a title. This asks "have I already filed this artist", which the DJ answers
-consistently. Never reintroduce genre-from-words.
+`crates.tag_crate` learns the mapping from the DJ's own filing - **nothing is
+hardcoded**, so "Tech House" means whatever crate they put such tracks in. A
+tag must be seen twice and point one way at least half the time.
 
-Coverage is the limit, not accuracy: artist tags exist on 1,248 of 1,632
-files, but only ~14% of *unfiled* tracks are by an artist already filed
-unanimously. **Coverage grows every time the DJ files a track by a new
-artist**, which is the strongest argument for working the review queue.
+Two subtleties, both load-bearing:
+
+- Tag purity **excludes acapellas**, because the acapella rule runs first and
+  they never reach the tag rule. "Hip-Hop/Rap" covers 39 rap tracks, 12 pop
+  and 32 isolated vocals: 46% pure counting the vocals, 73.5% without them.
+  That is the difference between the tag being unusable and unlocking 51
+  tracks.
+- Read the genre from `MetadataReader` index **4**. Index 5 is the track
+  NUMBER, and reading it produces a confident mapping from the tag "1" to a
+  crate. This happened.
+
+**Who made it** is the fallback where there is no usable tag: the remixer
+named in the filename first ("(Gorgon City Remix)" is Gorgon City's record,
+not Diplo's), then the artist tag, and only where the DJ's filing for that
+person is unanimous. 88.7% accurate over 30% of tracks.
+
+**None of this is the filename-keyword dead end.** That guessed a genre from
+words in a *title*. These read the file's own metadata and ask "where do I
+file tracks like this", learning the answer from the DJ. Never reintroduce
+genre-from-words.
+
+Where any rule disagrees with the audio model the track is marked `disputed`
+and surfaces in "Worth a second look" — none of them is perfect, and the
+disagreement costs nothing because both numbers are computed anyway.
+
+**Coverage, not accuracy, is the remaining limit.** 96% of hand-filed tracks
+carry a genre tag but only 32% of the unfiled ones do; the rest are
+SoundCloud rips that fall through to the audio model at ~77%. Every tag the
+DJ teaches (two tracks is enough) unlocks all the others carrying it — e.g.
+"minimal / deep tech" is on 34 unfiled tracks and has never been filed once.
 
 **Confidence is measured over the family, not the crate.** A track split 0.45
 house / 0.40 tech is 0.85 sure of the family and merely unsure which half — so

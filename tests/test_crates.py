@@ -357,3 +357,137 @@ def test_artist_crate_is_silent_without_a_tag(tmp_path):
     con = connect(tmp_path / "l.db")
     assert artist_crate(con, None) == (None, 0)
     assert artist_crate(con, "Nobody At All") == (None, 0)
+
+
+def test_credited_remixer_strips_genre_qualifiers():
+    """"(Boucho UKG Edit)" is by Boucho; UKG is a genre, not part of a name.
+    Without this, their UKG edit and their plain remix are different people."""
+    from crateapp.crates import credited_remixer as r
+    assert r("Somebody (Boucho UKG Edit).aiff") == r("Thing (Boucho Remix).wav")
+    assert r("Blame (Gorgon City Remix).aiff") == "gorgoncity"
+    assert r("no credit here.aiff") is None
+
+
+def test_a_remix_is_filed_by_its_remixer_not_the_original_artist(tmp_path):
+    """A remix is the remixer's record - their drums, their bassline, their
+    genre. The artist tag names the original act, which is one of the ways
+    filing by artist goes wrong."""
+    from crateapp.crates import who_made_it
+    con = connect(tmp_path / "l.db")
+    # The DJ has filed a Sammy Virji track under UKG by hand...
+    con.execute("INSERT INTO tracks (id, path, filename, artist) "
+                "VALUES (1,'/a.wav','Sammy Virji - Thing.wav','sammyvirji')")
+    con.commit()
+    correct(con, 1, "UKG", mode="move")
+    # ...and separately filed Drake under rap.
+    con.execute("INSERT INTO tracks (id, path, filename, artist) "
+                "VALUES (2,'/b.wav','Drake - Song.wav','drake')")
+    con.commit()
+    correct(con, 2, "rap", mode="move")
+    # A Drake track remixed by Sammy Virji belongs with the remixer.
+    con.execute("INSERT INTO tracks (id, path, filename, artist, remixer) "
+                "VALUES (3,'/c.wav','Drake - Song (Sammy Virji Remix).wav',"
+                "'drake','sammyvirji')")
+    con.commit()
+    who, crate, n = who_made_it(con, 3)
+    assert crate == "UKG", "the remixer decides, not the original artist"
+    assert who == "sammyvirji"
+
+
+def test_who_made_it_falls_back_to_the_artist(tmp_path):
+    from crateapp.crates import who_made_it
+    con = connect(tmp_path / "l.db")
+    con.execute("INSERT INTO tracks (id, path, filename, artist) "
+                "VALUES (1,'/a.wav','MPH - One.wav','mph')")
+    con.commit()
+    correct(con, 1, "UKG", mode="move")
+    con.execute("INSERT INTO tracks (id, path, filename, artist) "
+                "VALUES (2,'/b.wav','MPH - Two.wav','mph')")
+    con.commit()
+    assert who_made_it(con, 2)[1] == "UKG"
+
+
+def test_who_made_it_is_silent_on_an_unknown_track(tmp_path):
+    from crateapp.crates import who_made_it
+    con = connect(tmp_path / "l.db")
+    assert who_made_it(con, 999) == (None, None, 0)
+
+
+# ------------------------------------------------------- the genre tag rule
+
+def _tagged(con, tid, tag, crate=None):
+    con.execute("INSERT INTO tracks (id, path, filename, genre_tag) "
+                "VALUES (?,?,?,?)", (tid, f"/{tid}.wav", f"{tid}.wav", tag))
+    con.commit()
+    if crate:
+        correct(con, tid, crate, mode="move")
+
+
+def test_the_tag_mapping_is_learned_not_hardcoded(tmp_path):
+    """Nothing in the code knows that "Tech House" means tech. It is read off
+    the DJ's own filing, so it follows their vocabulary and not Beatport's."""
+    from crateapp.crates import tag_crate
+    con = connect(tmp_path / "l.db")
+    for i in (1, 2, 3):
+        _tagged(con, i, "Tech House", "my weird crate")
+    assert tag_crate(con, "tech house")[0] == "my weird crate"
+    assert tag_crate(con, "TECH HOUSE")[0] == "my weird crate", "case-insensitive"
+
+
+def test_a_tag_seen_once_decides_nothing(tmp_path):
+    """One example is a coincidence, not a mapping."""
+    from crateapp.crates import tag_crate
+    con = connect(tmp_path / "l.db")
+    _tagged(con, 1, "Tech House", "tech")
+    assert tag_crate(con, "Tech House") == (None, 0, 0.0)
+
+
+def test_a_tag_that_points_both_ways_decides_nothing(tmp_path):
+    """"Hip-Hop/Rap" covers rap, pop crossovers and acapellas here. A tag has
+    to point mostly one way before it is worth following."""
+    from crateapp.crates import tag_crate
+    con = connect(tmp_path / "l.db")
+    for i, c in ((1, "rap"), (2, "pop"), (3, "vocals"), (4, "house")):
+        _tagged(con, i, "Mixed Bag", c)
+    assert tag_crate(con, "Mixed Bag") == (None, 0, 0.0)
+
+
+def test_the_tag_rule_ignores_the_models_own_guesses(tmp_path):
+    """Same rule as everywhere else: only the DJ's filing is evidence."""
+    from crateapp.crates import tag_crate
+    con = connect(tmp_path / "l.db")
+    for i in (1, 2, 3):
+        _tagged(con, i, "Tech House")
+        auto_assign(con, i, {"crate": "tech", "band": "confident",
+                             "similarity": 0.9})
+    assert tag_crate(con, "Tech House") == (None, 0, 0.0)
+
+
+def test_an_untagged_track_falls_through(tmp_path):
+    from crateapp.crates import tag_crate
+    con = connect(tmp_path / "l.db")
+    assert tag_crate(con, None) == (None, 0, 0.0)
+    assert tag_crate(con, "   ") == (None, 0, 0.0)
+
+
+def test_tag_purity_ignores_acapellas(tmp_path):
+    """The acapella rule runs first, so isolated vocals never reach the tag
+    rule. Counting them drags a tag's purity down for a decision it is not
+    being asked to make - on the real library "Hip-Hop/Rap" reads 46% pure
+    with them and 76% without, which is the difference between unusable and
+    useful."""
+    import json
+    from crateapp.crates import tag_crate
+    con = connect(tmp_path / "l.db")
+    for i, (crate, aca) in enumerate(
+            [("rap", 0), ("rap", 0), ("rap", 0),
+             ("vocals", 1), ("vocals", 1), ("vocals", 1), ("vocals", 1)], start=1):
+        con.execute("INSERT INTO tracks (id, path, filename, genre_tag) "
+                    "VALUES (?,?,?,'Hip-Hop/Rap')", (i, f"/{i}.wav", f"{i}.wav"))
+        con.execute("INSERT INTO analysis (track_id, vocal) VALUES (?,?)",
+                    (i, json.dumps({"is_acapella": bool(aca)})))
+        con.commit()
+        correct(con, i, crate, mode="move")
+    crate, n, purity = tag_crate(con, "Hip-Hop/Rap")
+    assert crate == "rap", "the acapellas must not outvote the rap tracks"
+    assert n == 3 and purity == 1.0

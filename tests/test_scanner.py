@@ -85,3 +85,26 @@ def test_pending_lists_only_unanalysed(tmp_path):
     con.execute("UPDATE tracks SET analysed_at='now' WHERE filename='a.wav'")
     con.commit()
     assert [r["filename"] for r in pending(con)] == ["b.wav"]
+
+
+def test_read_tags_takes_genre_from_the_right_field(tmp_path):
+    """MetadataReader returns (title, artist, album, comment, genre, track,
+    date, ...). Genre is index 4; index 5 is the track NUMBER. Reading 5 by
+    mistake produces a rule that confidently maps the tag "1" to a crate,
+    which is exactly what happened once."""
+    from crateapp.scanner import read_tags
+    import wave
+    f = tmp_path / "x.wav"
+    with wave.open(str(f), "wb") as w:
+        w.setnchannels(1); w.setsampwidth(2); w.setframerate(8000)
+        w.writeframes(b"\x00\x00" * 800)
+    artist, genre = read_tags(f)
+    # An untagged file must yield nothing rather than a stray number.
+    assert genre is None or not genre.strip().isdigit()
+
+
+def test_read_tags_survives_an_unreadable_file(tmp_path):
+    from crateapp.scanner import read_tags
+    f = tmp_path / "broken.wav"
+    f.write_bytes(b"not audio at all")
+    assert read_tags(f) == (None, None)

@@ -24,7 +24,7 @@ from collections import Counter
 from pathlib import Path
 
 from crateapp.classifier import Classifier, acapella_verdict, train
-from crateapp.crates import artist_crate, auto_assign
+from crateapp.crates import auto_assign, tag_crate, who_made_it
 from crateapp.db import LOCK, connect
 from crateapp.worker import load_embedding
 from eval_genre import GENRE_PLAYLISTS, xml_labels
@@ -105,8 +105,10 @@ def reclassify(con, model_path):
                   for r in con.execute(
                       "SELECT track_id, vocal FROM analysis "
                       "WHERE vocal IS NOT NULL").fetchall()}
-        artists = {r["id"]: r["artist"] for r in con.execute(
-            "SELECT id, artist FROM tracks WHERE artist IS NOT NULL").fetchall()}
+        tags = {r["id"]: r["genre_tag"] for r in con.execute(
+            "SELECT id, genre_tag FROM tracks "
+            "WHERE genre_tag IS NOT NULL").fetchall()}
+
         # Human labels are the ground truth and must survive re-filing.
         human = {r["track_id"] for r in con.execute(
             "SELECT track_id FROM assignments WHERE source='human'").fetchall()}
@@ -119,17 +121,26 @@ def reclassify(con, model_path):
         vec = load_embedding(con, tid)
         if vec is None:
             continue
-        by_artist, n_seen = artist_crate(con, artists.get(tid))
+        # Same order as runner._classify: acapella, tag, person, audio.
         aca = acapella_verdict(vocals.get(tid), clf.crate_names())
-        if by_artist and not aca:
+        chosen, why = None, None
+        if not aca:
+            by_tag, _n, _p = tag_crate(con, tags.get(tid))
+            if by_tag:
+                chosen, why = by_tag, "by genre tag"
+            else:
+                _who, by_person, _n2 = who_made_it(con, tid)
+                if by_person:
+                    chosen, why = by_person, "by artist (yours)"
+        if chosen:
             model = clf.classify(vec)
             auto_assign(con, tid, {
-                "crate": by_artist, "band": "confident", "p": 1.0,
+                "crate": chosen, "band": "confident", "p": 1.0,
                 "similarity": model.get("similarity", 1.0), "margin": 1.0,
                 "scores": model.get("scores", []),
                 "disputed": bool(model.get("crate")
-                                 and model["crate"] != by_artist)})
-            bands["by artist (yours)"] += 1
+                                 and model["crate"] != chosen)})
+            bands[why] += 1
             continue
         if aca:
             result = {"crate": aca, "band": "confident", "similarity": 1.0,

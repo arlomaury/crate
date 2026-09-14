@@ -22,7 +22,7 @@ from pathlib import Path
 
 import analyze
 from crateapp.classifier import Classifier, acapella_verdict
-from crateapp.crates import artist_crate, auto_assign
+from crateapp.crates import auto_assign, tag_crate, who_made_it
 from crateapp.db import LOCK, connect
 from crateapp.scanner import pending, scan
 from crateapp.worker import analyse_one, analyse_track, load_embedding, store_result
@@ -175,34 +175,50 @@ class Runner:
         # Acapellas are routed out before the genre question is asked - see
         # classifier.acapella_verdict for why the DSP verdict beats the model
         # here.
-        # Strongest signal first, and it is not an audio one: if the DJ has
-        # already filed this artist - consistently - that answers the question
-        # better than the model can. Measured 95.6% leave-one-out, against the
-        # model's 76.9%.
+        # The decision order, and it is mostly not about the audio. Measured
+        # held out on 530 labelled recordings:
+        #
+        #   audio only                              76.6%
+        #   acapella -> person -> audio             77.4%
+        #   acapella -> tag -> person -> audio      92.1%   <- this
+        #
+        # and on house vs tech house, 97.9% against the audio model's 75.4%.
+        # The DJ files that pair by the shop's tag, so the tag recovers it and
+        # no amount of listening ever could.
+        #
+        # Acapellas come first because an isolated vocal is still tagged with
+        # whatever the original was - "Hip-Hop/Rap" covers 18 of them here -
+        # and the DSP verdict is the better judge of what it actually is.
         with LOCK:
-            by_artist, n_seen = artist_crate(con, trow["artist"])
+            who, by_person, n_person = who_made_it(con, row["id"])
+            by_tag, n_tag, purity = tag_crate(con, trow["genre_tag"])
         vocal = json.loads(arow["vocal"]) if arow and arow["vocal"] else None
         aca = acapella_verdict(vocal, classifier.crate_names())
 
-        if by_artist and not aca:
+        chosen, reason = None, None
+        if aca:
+            chosen, reason = aca, "isolated vocal"
+        elif by_tag:
+            chosen = by_tag
+            reason = (f"tagged \u201c{trow['genre_tag']}\u201d, and you file "
+                      f"that in {by_tag} ({int(purity * 100)}% of {n_tag})")
+        elif by_person:
+            chosen = by_person
+            reason = (f"you filed {n_person} other track"
+                      f"{'' if n_person == 1 else 's'} by {who} in {by_person}")
+
+        if chosen:
             model = classifier.classify(vec)
-            result = {"crate": by_artist, "band": "confident", "p": 1.0,
+            result = {"crate": chosen, "band": "confident", "p": 1.0,
                       "similarity": model.get("similarity", 1.0),
                       "margin": 1.0,
                       "scores": model.get("scores", []),
-                      "reason": f"you filed {n_seen} other track"
-                                f"{'' if n_seen == 1 else 's'} by this artist "
-                                f"in {by_artist}",
-                      # Worth a look when the audio says something else - the
-                      # rule is 95.6%, not 100%, and a remix credited to the
-                      # original artist is exactly how it goes wrong.
+                      "reason": reason,
+                      # Worth a second look when the audio says otherwise.
+                      # None of these rules is perfect and the disagreement is
+                      # free - both numbers are computed either way.
                       "disputed": bool(model.get("crate")
-                                       and model["crate"] != by_artist)}
-        elif aca:
-            result = {"crate": aca, "band": "confident", "similarity": 1.0,
-                      "margin": 1.0, "p": 1.0,
-                      "scores": [{"crate": aca, "p": 1.0}],
-                      "reason": "acapella"}
+                                       and model["crate"] != chosen)}
         else:
             result = classifier.classify(vec)
 
