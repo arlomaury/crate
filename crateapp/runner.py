@@ -207,6 +207,14 @@ class Runner:
             reason = (f"you filed {n_person} other track"
                       f"{'' if n_person == 1 else 's'} by {who} in {by_person}")
 
+        # Where the tag and the person disagree, one of them is wrong and it
+        # is worth a look even though the chain has already picked. Measured:
+        # when they agree the answer is right 98% of the time; when they
+        # disagree, 74%. The chain is still correct to prefer the tag (right
+        # 14 of those 19 against the person's 2) - this only asks the DJ to
+        # glance at the ones where the evidence was split.
+        rules_split = bool(by_tag and by_person and by_tag != by_person)
+
         if chosen:
             model = classifier.classify(vec)
             result = {"crate": chosen, "band": "confident", "p": 1.0,
@@ -217,8 +225,8 @@ class Runner:
                       # Worth a second look when the audio says otherwise.
                       # None of these rules is perfect and the disagreement is
                       # free - both numbers are computed either way.
-                      "disputed": bool(model.get("crate")
-                                       and model["crate"] != chosen)}
+                      "disputed": rules_split or bool(
+                          model.get("crate") and model["crate"] != chosen)}
         else:
             result = classifier.classify(vec)
 

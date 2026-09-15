@@ -123,23 +123,25 @@ def reclassify(con, model_path):
             continue
         # Same order as runner._classify: acapella, tag, person, audio.
         aca = acapella_verdict(vocals.get(tid), clf.crate_names())
-        chosen, why = None, None
+        chosen, why, rules_split = None, None, False
         if not aca:
             by_tag, _n, _p = tag_crate(con, tags.get(tid))
+            _who, by_person, _n2 = who_made_it(con, tid)
+            # Tag and person disagreeing is worth a look even once the chain
+            # has picked - right 74% of the time against 98% when they agree.
+            rules_split = bool(by_tag and by_person and by_tag != by_person)
             if by_tag:
                 chosen, why = by_tag, "by genre tag"
-            else:
-                _who, by_person, _n2 = who_made_it(con, tid)
-                if by_person:
-                    chosen, why = by_person, "by artist (yours)"
+            elif by_person:
+                chosen, why = by_person, "by artist (yours)"
         if chosen:
             model = clf.classify(vec)
             auto_assign(con, tid, {
                 "crate": chosen, "band": "confident", "p": 1.0,
                 "similarity": model.get("similarity", 1.0), "margin": 1.0,
                 "scores": model.get("scores", []),
-                "disputed": bool(model.get("crate")
-                                 and model["crate"] != chosen)})
+                "disputed": rules_split or bool(
+                    model.get("crate") and model["crate"] != chosen)})
             bands[why] += 1
             continue
         if aca:

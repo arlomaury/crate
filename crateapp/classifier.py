@@ -365,11 +365,14 @@ def train(con, model_path, human_only=True, min_per_class=5):
 
         Xu, yu = X[usable], y[usable]
         scaler = StandardScaler().fit(Xu)
-        # C=0.001 is heavy regularisation, and it is not a guess: with ~450
-        # distinct labelled recordings against 1280 dimensions this problem is
-        # badly over-parameterised, and the sweep in tune_genre.py shows
-        # accuracy climbing all the way down from C=3 (73.5%) to C=0.001
-        # (76.1%) before collapsing below it.
+        # Heavy regularisation, and not a guess: ~550 distinct labelled
+        # recordings against 1280 dimensions is badly over-parameterised.
+        #
+        # Re-swept as the DJ's labels grew, because the right amount moves
+        # with the data: at 451 recordings C=0.001 won; at 548 the peak has
+        # shifted to C=0.003 (75.1% against 0.001's 74.4%, and 71.6% at
+        # C=0.3). Worth re-running tune_genre.py after a few hundred more
+        # corrections rather than assuming this still holds.
         #
         # class_weight="balanced" scores higher still (77.0%) but is NOT used:
         # it buys recall on the small crates by giving up precision on them
@@ -377,7 +380,7 @@ def train(con, model_path, human_only=True, min_per_class=5):
         # up in a crate is the failure the DJ actually reported; a track the
         # model is unsure of goes to the review queue instead, which is the
         # cheaper mistake.
-        lr = LogisticRegression(max_iter=5000, C=0.001).fit(
+        lr = LogisticRegression(max_iter=5000, C=0.003).fit(
             scaler.transform(Xu), yu)
 
         w, b = lr.coef_, lr.intercept_

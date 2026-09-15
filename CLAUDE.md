@@ -48,6 +48,9 @@ and **declined** — do not add them without asking again.
 | Tempo features, PCA (32–256 dims), RBF SVM | +0.2% (noise), worse at every PCA size, 73.5% respectively. |
 | **Groove / beat-synchronous rhythm features** | The EDM subgenre literature (arXiv:2110.08862) says rhythm features dominate this task, so a 52-dim beat-synchronous band-energy profile was built (`groove_experiment.py`). It carries real signal alone — 62.9% on house-vs-tech against a 54.8% baseline — but adds **nothing** on top of the embedding (74.9% → 74.2%). The embedding already knows what groove would tell it. |
 | **Discogs labels as a targeted house/tech signal** | The taxonomy has explicit House / Tech House labels and uses them well (says "Tech House" → right 47 of 53 times). A single House-minus-TechHouse axis appeared to hit 77.7% — but that threshold was fitted and scored on the same data. Under repeated cross-validation it is 74.1% ±0.5 against the embedding's 73.5% ±1.1: the same, within noise. |
+| **Voting between the rules instead of a priority chain** | Measured: where the tag and the audio model disagree (129 cases) the tag is right **87%** and the audio **9%**; where the tag and the person rule disagree (19 cases) the tag is right 14 to 2. Even when the person rule sides with the audio against the tag, the tag is still right 5 of 6. The chain is already optimal — no ensemble beats it. The disagreement is still worth surfacing, which is what `disputed` does. |
+| **Propagating data between identical copies** | The library holds 322 groups of byte-identical recordings, so it looked like free information. It is not: only **8** untagged tracks have a tagged twin, and only **1** group sits in two different crates. |
+| **Recovering genres from rek.xml that the files lack** | Rekordbox knows a genre for 897 filenames, but of the 576 library tracks with no embedded tag it covers **3**. Those tracks are SoundCloud rips with no metadata anywhere. |
 | **Pooling the embedding differently** | The stored vector is `emb.mean(axis=0)` over the whole track, which averages the intro and outro in with the groove — so mean+std, percentiles, max, and embedding *only the drop section* were all tried (`pooling_experiment.py`). The shipped mean wins or ties every one: mean 76.5%, percentiles 76.6% (3× the dimensions), mean+std 76.2%, drop-only **73.3%** — worse. |
 | **Collecting more labels to fix accuracy** | Measured learning curve: 130 labels → 67.7%, 364 → 76.5%, 520 → 76.9%. It has plateaued; +43% more labels bought 0.4 points. Labelling more helps only the *individually starved* crates (afro at 20, UKG at 25), not overall accuracy. |
 | `class_weight="balanced"` | Scores higher overall (77.0%) but buys recall on small crates by giving up precision on them (afro 1.000 → 0.619, DUBSTEP 1.000 → 0.958). Wrong given the severity ruling above. |
@@ -115,8 +118,11 @@ requirement.
 audio model alone                        75.1%
 acapella -> person -> audio              77.4%
 acapella -> tag -> person -> audio       93.2%   <- ships
-   ...on house vs tech house             97.9%   (audio alone: 75.4%)
+   ...on house vs tech house             97.6%   (audio alone: 76.3%)
    ...vocals                    precision 100%, recall 96.8%
+
+per crate: house .970  tech .939  pop .985  DUBSTEP 1.000  vocals 1.000
+           UKG .880   afro .895  rap .815   rock .778     (precision)
 ```
 
 **The genre tag written into the file decides 88% of tracks.** Whoever sold or
