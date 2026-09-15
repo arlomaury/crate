@@ -279,10 +279,15 @@ def training_set(con, human_only=True):
     A track the DJ has filed by hand, or confirmed, is evidence. Nothing else
     is.
     """
+    # Locked crates are curated by hand and must stay out of the model
+    # entirely - not as a predictable class, and not as a centroid either,
+    # since a one-track crate's mean would otherwise sit in the middle of the
+    # "is this like anything I own" check.
     sql = ("SELECT c.name, a.track_id FROM assignments a "
-           "JOIN crates c ON c.id = a.crate_id")
+           "JOIN crates c ON c.id = a.crate_id "
+           "WHERE coalesce(c.locked, 0) = 0")
     if human_only:
-        sql += " WHERE a.source = 'human'"
+        sql += " AND a.source = 'human'"
     rows = con.execute(sql).fetchall()
 
     # A track filed under two crates is not a clean label for a single-label

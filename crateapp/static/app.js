@@ -203,6 +203,11 @@ function item(label, count, key, isReview, extra) {
   b.dataset.key = key;
   if (state.view === key) b.classList.add("active");
   b.append(el("span", "label", label), el("span", "count", String(count)));
+  const c = state.crates.find((x) => x.name === key);
+  if (c && c.locked) {
+    b.classList.add("is-locked");
+    b.title = `${key} is hand-picked \u2014 nothing is filed here automatically`;
+  }
   b.addEventListener("click", () => {
     if (state.view === key) return;
     state.view = key;
@@ -262,6 +267,30 @@ async function buildCrate(name) {
   const head = el("div", "content-head");
   head.append(el("h2", null, name),
               el("span", "sub", `${data.tracks.length} track${data.tracks.length === 1 ? "" : "s"}`));
+
+  /* Some crates are a hand-picked list, not a genre. Locking one keeps every
+   * automatic route out of it - and keeps what is inside from teaching the
+   * rules, so a crate holding one favourite track cannot start attracting
+   * that artist's whole catalogue. */
+  const crate = state.crates.find((c) => c.name === name);
+  if (crate) {
+    const lock = el("button", "lock-btn" + (crate.locked ? " on" : ""),
+      crate.locked ? "Hand-picked only" : "Lock to what is here");
+    lock.title = crate.locked
+      ? "Nothing is filed here automatically. Click to allow it again."
+      : "Stop anything being filed here automatically";
+    lock.addEventListener("click", async () => {
+      lock.disabled = true;
+      try {
+        await api.post("/api/lock", { crate: name, locked: !crate.locked });
+        status(crate.locked
+          ? `${name} is open to automatic filing again.`
+          : `${name} is yours alone now \u2014 nothing will be added to it.`);
+        await refresh();
+      } catch (e) { fail(e.message); lock.disabled = false; }
+    });
+    head.append(lock);
+  }
   frag.append(head);
 
   if (!data.tracks.length) {

@@ -553,3 +553,90 @@ def test_an_artists_acapellas_do_not_decide_their_full_tracks(tmp_path):
     con.commit()
     assert who_made_it(con, 9)[1] is None, \
         "a full track must not inherit the crate of the artist's stems"
+
+
+# -------------------------------------------------------- hand-picked crates
+
+def test_nothing_is_filed_into_a_locked_crate(tmp_path):
+    from crateapp.crates import set_locked
+    con = connect(tmp_path / "l.db")
+    con.execute("INSERT INTO tracks (id, path, filename) VALUES (1,'/a.wav','a.wav')")
+    con.commit()
+    ensure_crate(con, "the song")
+    set_locked(con, "the song")
+    auto_assign(con, 1, {"crate": "the song", "band": "confident",
+                         "similarity": 0.99})
+    assert con.execute("SELECT count(*) FROM assignments").fetchone()[0] == 0
+
+
+def test_the_dj_can_still_file_into_a_locked_crate_by_hand(tmp_path):
+    """Locking constrains the tool, not the DJ."""
+    from crateapp.crates import set_locked
+    con = connect(tmp_path / "l.db")
+    con.execute("INSERT INTO tracks (id, path, filename) VALUES (1,'/a.wav','a.wav')")
+    con.commit()
+    ensure_crate(con, "the song")
+    set_locked(con, "the song")
+    correct(con, 1, "the song", mode="move")
+    assert [r["filename"] for r in
+            con.execute("SELECT t.filename FROM tracks t JOIN assignments a "
+                        "ON a.track_id=t.id JOIN crates c ON c.id=a.crate_id "
+                        "WHERE c.name='the song'")] == ["a.wav"]
+
+
+def test_a_locked_crate_teaches_no_rule(tmp_path):
+    """The half that is easy to forget. A crate holding one favourite track
+    would otherwise teach "this artist belongs here", and the rules would
+    duly file that artist's whole catalogue into it."""
+    from crateapp.crates import set_locked, tag_crate, who_made_it
+    con = connect(tmp_path / "l.db")
+    for i in (1, 2):
+        con.execute("INSERT INTO tracks (id, path, filename, artist, genre_tag) "
+                    "VALUES (?,?,?,'someone','Tech House')",
+                    (i, f"/{i}.wav", f"{i}.wav"))
+        con.commit()
+        correct(con, i, "the song", mode="move")
+    ensure_crate(con, "the song")
+    set_locked(con, "the song")
+    assert tag_crate(con, "Tech House") == (None, 0, 0.0)
+    con.execute("INSERT INTO tracks (id, path, filename, artist) "
+                "VALUES (9,'/9.wav','9.wav','someone')")
+    con.commit()
+    assert who_made_it(con, 9)[1] is None
+
+
+def test_a_locked_crate_is_not_in_the_model(tmp_path):
+    """Not predictable, and not a centroid either - a one-track crate's mean
+    would otherwise sit in the middle of the "is this like anything I own"
+    check and make unfamiliar music look familiar."""
+    import json
+    import numpy as np
+    from crateapp.classifier import train
+    from crateapp.worker import store_result
+    from crateapp.crates import set_locked
+    con = connect(tmp_path / "l.db")
+    tid = 0
+    for crate, n in (("house", 6), ("tech", 6), ("the song", 1)):
+        for _ in range(n):
+            tid += 1
+            con.execute("INSERT INTO tracks (id, path) VALUES (?,?)",
+                        (tid, f"/{tid}.wav"))
+            store_result(con, tid, {"bpm": 128.0},
+                         np.random.default_rng(tid).random(8).astype("float32"))
+            correct(con, tid, crate, mode="move")
+    ensure_crate(con, "the song")
+    set_locked(con, "the song")
+    p = tmp_path / "m.json"
+    train(con, p, min_per_class=5)
+    doc = json.loads(p.read_text())
+    assert "the song" not in doc["crates"]
+    assert "the song" not in doc["linear"]["classes"]
+
+
+def test_unlocking_lets_it_back_in(tmp_path):
+    from crateapp.crates import set_locked, is_locked
+    con = connect(tmp_path / "l.db")
+    ensure_crate(con, "x")
+    assert set_locked(con, "x") and is_locked(con, "x")
+    assert set_locked(con, "x", False) and not is_locked(con, "x")
+    assert set_locked(con, "nope") is False

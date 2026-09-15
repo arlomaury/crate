@@ -21,6 +21,34 @@ def ensure_crate(con, name):
     return con.execute("SELECT id FROM crates WHERE name=?", (name,)).fetchone()["id"]
 
 
+def set_locked(con, name, locked=True):
+    """Curate a crate by hand only.
+
+    A locked crate is invisible to every automatic route: nothing is filed
+    into it, and nothing inside it is evidence for any rule. That second half
+    matters more than it looks - without it, a crate holding one favourite
+    track teaches "this artist belongs here" and the rules duly start filing
+    that artist's whole catalogue into it.
+
+    The DJ can still move or add tracks by hand; locking constrains the tool,
+    not them.
+    """
+    cur = con.execute("UPDATE crates SET locked=? WHERE name=?",
+                      (1 if locked else 0, name))
+    con.commit()
+    return cur.rowcount > 0
+
+
+def is_locked(con, name):
+    row = con.execute("SELECT locked FROM crates WHERE name=?", (name,)).fetchone()
+    return bool(row and row["locked"])
+
+
+def locked_names(con):
+    return [r["name"] for r in
+            con.execute("SELECT name FROM crates WHERE locked=1 ORDER BY name")]
+
+
 def auto_assign(con, track_id, result):
     """File a classifier result (the dict returned by Classifier.classify).
 
@@ -37,7 +65,10 @@ def auto_assign(con, track_id, result):
     """
     con.execute("DELETE FROM assignments WHERE track_id=? AND source='auto'",
                (track_id,))
-    if result.get("crate") is None:
+    crate = result.get("crate")
+    if crate is None or is_locked(con, crate):
+        # A locked crate is the DJ's alone. Refused here as well as upstream,
+        # so no future caller can route around it.
         con.commit()
         return
     cid = ensure_crate(con, result["crate"])
@@ -252,6 +283,7 @@ def tag_crate(con, genre_tag):
         "LEFT JOIN analysis an ON an.track_id = t.id "
         "WHERE a.source = 'human' AND lower(t.genre_tag) = ? "
         "  AND coalesce(json_extract(an.vocal, '$.is_acapella'), 0) = 0 "
+        "  AND coalesce(c.locked, 0) = 0 "
         "GROUP BY c.name ORDER BY n DESC", (tag,)).fetchall()
     if not rows:
         return None, 0, 0.0
@@ -344,6 +376,7 @@ def _filed_under(con, key):
         "LEFT JOIN analysis an ON an.track_id = t.id "
         "WHERE a.source = 'human' AND (t.artist = ? OR t.remixer = ?) "
         "  AND coalesce(json_extract(an.vocal, '$.is_acapella'), 0) = 0 "
+        "  AND coalesce(c.locked, 0) = 0 "
         "GROUP BY c.name", (key, key)).fetchall()
     if len(rows) != 1:
         return None, 0
@@ -383,6 +416,7 @@ def artist_crate(con, artist):
         "LEFT JOIN analysis an ON an.track_id = t.id "
         "WHERE a.source = 'human' AND t.artist = ? "
         "  AND coalesce(json_extract(an.vocal, '$.is_acapella'), 0) = 0 "
+        "  AND coalesce(c.locked, 0) = 0 "
         "GROUP BY c.name", (key,)).fetchall()
     if len(rows) != 1:
         return None, 0                    # unfiled, or filed inconsistently

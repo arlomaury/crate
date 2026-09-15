@@ -199,6 +199,16 @@ def make_app(con, model_path, runner=None):
                 if self.path == "/api/correct":
                     return self._send(self._correct(payload))
 
+                if self.path == "/api/lock":
+                    name = self._require(payload, "crate")
+                    locked = bool(payload.get("locked", True))
+                    with LOCK:
+                        if not crate_ops.set_locked(con, name, locked):
+                            raise ApiError("no such crate", code=404)
+                    # A locked crate leaves the model, so the model changes.
+                    retrainer.schedule()
+                    return self._send({"crate": name, "locked": locked})
+
                 if self.path == "/api/remove":
                     track_id = self._require(payload, "track_id")
                     with LOCK:
@@ -247,11 +257,12 @@ def make_app(con, model_path, runner=None):
         def _state(self):
             with LOCK:
                 rows = con.execute(
-                    "SELECT c.name, count(a.track_id) n FROM crates c "
+                    "SELECT c.name, c.locked, count(a.track_id) n FROM crates c "
                     "LEFT JOIN assignments a ON a.crate_id=c.id "
                     "GROUP BY c.id ORDER BY c.name").fetchall()
                 return {
-                    "crates": [{"name": r["name"], "count": r["n"]} for r in rows],
+                    "crates": [{"name": r["name"], "count": r["n"],
+                                "locked": bool(r["locked"])} for r in rows],
                     "uncertain": len(crate_ops.uncertain(con)),
                     "unsorted": len(crate_ops.unsorted(con)),
                     "disputed": len(crate_ops.disputed(con)),

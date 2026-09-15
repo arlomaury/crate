@@ -89,6 +89,13 @@ def migrate(con):
     at all to a table that already exists - so a new column has to be added
     explicitly or every existing library breaks on upgrade.
     """
+    crate_cols = {r["name"] for r in con.execute("PRAGMA table_info(crates)")}
+    if "locked" not in crate_cols:
+        # A crate the DJ curates entirely by hand. Nothing is ever filed into
+        # it automatically, and - just as important - nothing in it teaches
+        # any rule, so a one-track crate cannot start attracting company.
+        con.execute("ALTER TABLE crates ADD COLUMN locked INTEGER DEFAULT 0")
+
     cols = {r["name"] for r in con.execute("PRAGMA table_info(tracks)")}
     if "genre_tag" not in cols:
         # The genre written into the file by whoever sold or ripped it -

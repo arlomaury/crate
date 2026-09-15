@@ -252,6 +252,16 @@ the model guesses from timbre alone — confidently and wrongly. Detection is
 2-of-3 DSP signals, calibrated against 27 real acapellas and 130 full mixes
 (27/27 caught, 0 false positives).
 
+**A crate can be locked to what the DJ put in it.** `crates.set_locked` —
+"the song" is one of these. Nothing is ever filed into a locked crate, and,
+just as important, **nothing inside it teaches any rule**: without that, a
+crate holding one favourite track would teach "this artist belongs here" and
+the rules would file that artist's whole catalogue in beside it. It is also
+kept out of the model entirely — not a predictable class, and not a centroid,
+since a one-track mean would otherwise sit in the middle of the "is this like
+anything I own" check. The DJ can still file into it by hand; locking
+constrains the tool, not them.
+
 **Duplicates are collapsed for training and for the set builder, never on
 disk.** Cut at cosine 0.99 — measured gap between same-song pairs (0.9958) and
 the closest genuinely distinct pair (0.9785). Nearly half the library is

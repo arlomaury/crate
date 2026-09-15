@@ -786,3 +786,26 @@ button.remove-btn.armed {
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .gap-progress { font-size: 11px; color: var(--uncertain); margin-top: 2px; }
+
+/* A hand-picked crate: the tool stays out of it. */
+button.lock-btn {
+  margin-left: auto;
+  padding: 3px 11px;
+  border-radius: 999px;
+  background: transparent;
+  border: 1px solid var(--line-2);
+  color: var(--ink-3);
+  font-size: 11px;
+}
+button.lock-btn:hover:not(:disabled) { color: var(--ink); border-color: var(--accent-dim); }
+button.lock-btn.on {
+  background: rgba(110,143,255,.14);
+  border-color: var(--accent-dim);
+  color: var(--accent);
+}
+.sidebar-item.is-locked .label::after {
+  content: "·";
+  margin-left: 6px;
+  color: var(--accent);
+  font-weight: 700;
+}
