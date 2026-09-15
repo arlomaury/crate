@@ -39,6 +39,8 @@ and **declined** — do not add them without asking again.
 
 | Approach | Why it failed |
 |---|---|
+| **Letting the voice model decide an acapella** | `voice_instrumental` answers "is there singing on this", not "is this an isolated vocal", so every sung pop record scores above 0.85 on it. It was allowed to declare an acapella at a 1-of-3 DSP score — on the reasoning that 0.33 was "the same half-convinced state 0.5 meant on the old 4-signal scale", which is wrong: 0.33 of three is ONE, where 0.5 of four was two. It filed 28 full mixes as acapellas (Mr. Brightside, Viva La Vida, Starships) **and cleared their review flag**, so they never surfaced. It may confirm a 2-of-3 verdict; it may never create one. |
+| **Learning a genre rule from acapellas** | `vocals` is a FORMAT, not a genre. The DJ files their own `_vocals_split` stems there, so counting those as evidence taught the artist rule "Lil Yachty → vocals" and it filed his full tracks alongside the stems. Both `tag_crate` and `who_made_it` now exclude acapellas from their evidence — the acapella rule owns that question and runs first. |
 | **Training the classifier on its own output** | `rebuild_centroids` selected every assignment regardless of `source`, reasoning that "a confidently auto-filed track is still evidence". It is not — it is the model's own opinion, and feeding it back is self-reinforcing. DUBSTEP reached 40 reference tracks of which **2** were the DJ's; rap 137 of which **1**. The crates filled with music that did not belong. **Only `source='human'` rows may train.** |
 | **Measuring accuracy without deduplicating first** | This library holds the same recording many times. An identical copy in the training fold while its twin is scored in the test fold is leakage. It reported **90.7%** when the honest figure was **76.1%** — a 15-point illusion. `eval_genre.py` now dedupes before cross-validation; never remove that. |
 | Nearest-centroid classification | Assumes each genre is a spherical blob around its mean. Measured 72.1% against logistic regression's 76.1%, and its precision was the visible failure: DUBSTEP 0.800, UK Garage 0.385. Kept only as an out-of-distribution signal (see §3). |
@@ -110,10 +112,11 @@ requirement.
 530 distinct labelled recordings:
 
 ```
-audio model alone                        76.6%
+audio model alone                        75.1%
 acapella -> person -> audio              77.4%
-acapella -> tag -> person -> audio       92.3%   <- ships
-   ...on house vs tech house             98.2%   (audio alone: 75.4%)
+acapella -> tag -> person -> audio       93.2%   <- ships
+   ...on house vs tech house             97.9%   (audio alone: 75.4%)
+   ...vocals                    precision 100%, recall 96.8%
 ```
 
 **The genre tag written into the file decides 88% of tracks.** Whoever sold or

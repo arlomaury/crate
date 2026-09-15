@@ -575,12 +575,24 @@ def analyse(path, gm, verbose=True, emb_dir=None):
             res["genre_predictions"] = preds
             if voice:
                 res["voice_model"] = voice
-                # The model's own read on vocals reinforces the DSP evidence.
-                # 0.33 is "one of three signals fired" on the rescaled score -
-                # the same half-convinced state 0.5 meant on the old 4-signal scale.
-                if voice["voice"] > 0.85 and voc["score"] >= 0.33:
-                    voc["is_acapella"] = True
-                    voc["needs_review"] = False
+                # The voice model may CONFIRM the DSP evidence; it may never
+                # promote it.
+                #
+                # It answers "is there singing on this", not "is this an
+                # isolated vocal" - so every sung pop record scores above 0.85
+                # on it. This once ran at `score >= 0.33`, on the reasoning
+                # that 0.33 was "the same half-convinced state 0.5 meant on
+                # the old 4-signal scale". It is not: 0.33 of three signals is
+                # ONE, where 0.5 of four was two. So a single DSP hint plus
+                # audible singing was enough to declare an acapella, and it
+                # declared 28 of them - Mr. Brightside, Viva La Vida,
+                # A Thousand Miles, Starships. Those average a 0.425 sub-bass
+                # ratio; real acapellas here run 0.03-0.15.
+                #
+                # It also cleared needs_review, so the mistakes never surfaced
+                # for the DJ to catch. vocal_profile already flags a 1-of-3
+                # score for review, and that is the correct outcome.
+                if voice["voice"] > 0.85 and voc["score"] >= 0.66:
                     voc["evidence"]["voice_model_agrees"] = True
             mean_emb = emb.mean(axis=0)
             # Cache the embedding rather than discarding it. Recomputing means

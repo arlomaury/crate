@@ -527,3 +527,29 @@ def test_a_tag_that_already_maps_is_not_a_gap(tmp_path):
     con.commit()
     auto_assign(con, 9, {"crate": "tech", "band": "confident", "similarity": .9})
     assert [g["tag"] for g in tag_gaps(con)] == []
+
+
+def test_an_artists_acapellas_do_not_decide_their_full_tracks(tmp_path):
+    """"vocals" is a FORMAT, not a genre.
+
+    The DJ files their own acapella stems there. Counting those as evidence
+    taught the rule "Lil Yachty -> vocals", which then filed his full tracks
+    alongside the stems. Who made a track says nothing about whether it is an
+    isolated vocal.
+    """
+    import json
+    from crateapp.crates import who_made_it
+    con = connect(tmp_path / "l.db")
+    for i in (1, 2):
+        con.execute("INSERT INTO tracks (id, path, filename, artist) "
+                    "VALUES (?,?,?,'lilyachty')",
+                    (i, f"/{i}.wav", f"{i}_vocals_split.m4a"))
+        con.execute("INSERT INTO analysis (track_id, vocal) VALUES (?,?)",
+                    (i, json.dumps({"is_acapella": True})))
+        con.commit()
+        correct(con, i, "vocals", mode="move")
+    con.execute("INSERT INTO tracks (id, path, filename, artist) "
+                "VALUES (9,'/9.wav','Full Track.mp3','lilyachty')")
+    con.commit()
+    assert who_made_it(con, 9)[1] is None, \
+        "a full track must not inherit the crate of the artist's stems"

@@ -331,11 +331,19 @@ def _filed_under(con, key):
     """The crate the DJ unanimously filed this normalised name into."""
     if not key:
         return None, 0
+    # Acapellas are excluded here for the same reason as in tag_crate, and it
+    # matters more than it looks: "vocals" is a FORMAT, not a genre. The DJ
+    # files their own acapella stems there, so counting those taught the rule
+    # "Lil Yachty -> vocals" and it duly filed his full tracks alongside the
+    # stems. Who made a track says nothing about whether it is an isolated
+    # vocal - the acapella rule answers that, and it runs first.
     rows = con.execute(
         "SELECT c.name, count(*) n FROM assignments a "
         "JOIN crates c ON c.id = a.crate_id "
         "JOIN tracks t ON t.id = a.track_id "
+        "LEFT JOIN analysis an ON an.track_id = t.id "
         "WHERE a.source = 'human' AND (t.artist = ? OR t.remixer = ?) "
+        "  AND coalesce(json_extract(an.vocal, '$.is_acapella'), 0) = 0 "
         "GROUP BY c.name", (key, key)).fetchall()
     if len(rows) != 1:
         return None, 0
@@ -362,11 +370,19 @@ def artist_crate(con, artist):
     key = normalise_artist(artist)
     if not key:
         return None, 0
+    # Acapellas are excluded here for the same reason as in tag_crate, and it
+    # matters more than it looks: "vocals" is a FORMAT, not a genre. The DJ
+    # files their own acapella stems there, so counting those taught the rule
+    # "Lil Yachty -> vocals" and it duly filed his full tracks alongside the
+    # stems. Who made a track says nothing about whether it is an isolated
+    # vocal - the acapella rule answers that, and it runs first.
     rows = con.execute(
         "SELECT c.name, count(*) n FROM assignments a "
         "JOIN crates c ON c.id = a.crate_id "
         "JOIN tracks t ON t.id = a.track_id "
+        "LEFT JOIN analysis an ON an.track_id = t.id "
         "WHERE a.source = 'human' AND t.artist = ? "
+        "  AND coalesce(json_extract(an.vocal, '$.is_acapella'), 0) = 0 "
         "GROUP BY c.name", (key,)).fetchall()
     if len(rows) != 1:
         return None, 0                    # unfiled, or filed inconsistently
