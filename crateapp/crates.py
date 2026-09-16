@@ -136,6 +136,14 @@ def correct(con, track_id, to_crate=None, mode="move", was_error=None):
         row = con.execute(
             "SELECT crate_id FROM assignments "
             "WHERE track_id=? AND source='auto'", (track_id,)).fetchone()
+        if row is None and to_crate:
+            # Confirming a track that is already the DJ's own filing (they
+            # pressed Move on a crate it is in). Nothing changes; it is
+            # recorded so the agreement is not lost.
+            row = con.execute(
+                "SELECT a.crate_id FROM assignments a JOIN crates c "
+                "ON c.id=a.crate_id WHERE a.track_id=? AND c.name=?",
+                (track_id, to_crate)).fetchone()
         if row is None:
             raise ValueError(
                 "nothing to confirm: this track was not filed automatically")
@@ -153,6 +161,19 @@ def correct(con, track_id, to_crate=None, mode="move", was_error=None):
         return
 
     to_id = ensure_crate(con, to_crate)
+
+    # Moving a track to the crate it is already in is agreement, not a
+    # correction. The picker defaults to where the track already is, so this
+    # is what happens when the DJ works the queue with Move instead of
+    # Correct - and recording it as the model being wrong both understates
+    # the measured accuracy and teaches the learning loop the opposite of
+    # what they meant. 35 of the first 152 corrections were this.
+    if mode == "move":
+        already = con.execute(
+            "SELECT 1 FROM assignments WHERE track_id=? AND crate_id=?",
+            (track_id, to_id)).fetchone()
+        if already:
+            mode = "confirm"
 
     from_id = None
     if mode == "move":

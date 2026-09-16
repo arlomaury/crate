@@ -640,3 +640,32 @@ def test_unlocking_lets_it_back_in(tmp_path):
     assert set_locked(con, "x") and is_locked(con, "x")
     assert set_locked(con, "x", False) and not is_locked(con, "x")
     assert set_locked(con, "nope") is False
+
+
+def test_moving_a_track_to_where_it_already_is_counts_as_agreement(tmp_path):
+    """The crate picker defaults to where the track already is, so pressing
+    Move without changing it means "yes, this is right". Recording that as a
+    model error understates the measured accuracy AND teaches the learning
+    loop the opposite of what the DJ meant - it happened 35 times in the
+    first 152 corrections."""
+    con = connect(tmp_path / "l.db")
+    con.execute("INSERT INTO tracks (id, path, filename, analysed_at) "
+                "VALUES (1,'/a.wav','a.wav','now')")
+    con.commit()
+    auto_assign(con, 1, {"crate": "house", "band": "uncertain",
+                         "similarity": 0.6})
+    correct(con, 1, "house", mode="move")
+    err = con.execute("SELECT was_error FROM corrections").fetchone()["was_error"]
+    assert err == 0, "agreeing is not the model being wrong"
+    assert uncertain(con) == [], "and it still resolves the review"
+
+
+def test_a_real_move_is_still_an_error(tmp_path):
+    con = connect(tmp_path / "l.db")
+    con.execute("INSERT INTO tracks (id, path, filename, analysed_at) "
+                "VALUES (1,'/a.wav','a.wav','now')")
+    con.commit()
+    auto_assign(con, 1, {"crate": "house", "band": "uncertain",
+                         "similarity": 0.6})
+    correct(con, 1, "tech", mode="move")
+    assert con.execute("SELECT was_error FROM corrections").fetchone()["was_error"] == 1
