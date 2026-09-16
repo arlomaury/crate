@@ -361,6 +361,30 @@ def tag_gaps(con, limit=8):
     return out
 
 
+# Two shapes appear in this library: "Artist - Title (Extended Mix)" and
+# "Title-Artist". Neither is metadata, and reading a name out of one is
+# guesswork compared to a tag - which is why a name recovered this way has to
+# clear a higher bar before it decides anything.
+#
+# This is NOT the genre-from-keywords dead end. No word in the filename is
+# read as a genre. It recovers WHO made the track and then asks the DJ's own
+# filing about that person - the same question the artist rule already
+# answers, for the 345 auto-filed tracks whose artist tag is simply missing.
+NAME_MIN_FILED = 2
+
+
+def artist_from_filename(filename):
+    """The artist a filename names, normalised, or None."""
+    stem = re.sub(r"\.(aiff?|wav|mp3|m4a|flac|aif)$", "", filename or "",
+                  flags=re.I)
+    stem = re.sub(r"\s*\([^)]*\)\s*$", "", stem)      # trailing (Extended Mix)
+    stem = re.sub(r"^\d{1,2}[\s.\-]+", "", stem)        # leading track number
+    if " - " in stem:
+        return normalise_artist(stem.split(" - ")[0])
+    m = re.match(r"^[^-]{3,}-(.+)$", stem)              # Title-Artist
+    return normalise_artist(m.group(1)) if m else None
+
+
 def who_made_it(con, track_id):
     """`(key, crate, n)` - the person whose filing decides this track.
 
@@ -377,7 +401,16 @@ def who_made_it(con, track_id):
         if crate:
             return rx, crate, n
     crate, n = artist_crate(con, row["artist"])
-    return (row["artist"], crate, n) if crate else (None, None, 0)
+    if crate:
+        return row["artist"], crate, n
+
+    # No usable artist tag. The filename usually still names them.
+    guessed = artist_from_filename(row["filename"])
+    if guessed:
+        crate, n = _filed_under(con, guessed)
+        if crate and n >= NAME_MIN_FILED:
+            return guessed, crate, n
+    return None, None, 0
 
 
 def _filed_under(con, key):

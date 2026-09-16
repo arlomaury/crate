@@ -669,3 +669,49 @@ def test_a_real_move_is_still_an_error(tmp_path):
                          "similarity": 0.6})
     correct(con, 1, "tech", mode="move")
     assert con.execute("SELECT was_error FROM corrections").fetchone()["was_error"] == 1
+
+
+# ------------------------------------------ recovering the artist from a name
+
+def test_artist_from_filename_handles_both_shapes():
+    """This library uses "Artist - Title (Extended Mix)" and "Title-Artist"."""
+    from crateapp.crates import artist_from_filename as a
+    assert a("Cloonee - Badman Sound (Extended Mix).wav") == a("Badman Sound-Cloonee.wav")
+    assert a("01 Chris Stussy - Blueprint.aiff") == a("Blueprint-Chris Stussy.wav")
+    assert a("noseparatorhere.wav") is None
+
+
+def test_a_name_from_a_filename_needs_more_evidence_than_a_tag(tmp_path):
+    """Reading a name out of a filename is guesswork next to a tag, so it has
+    to clear a higher bar before it decides anything."""
+    from crateapp.crates import who_made_it
+    con = connect(tmp_path / "l.db")
+    con.execute("INSERT INTO tracks (id, path, filename, artist) "
+                "VALUES (1,'/a.wav','Thing-Cloonee.wav','cloonee')")
+    con.commit()
+    correct(con, 1, "tech", mode="move")
+    # One filed track: enough for a tag, not enough for a parsed name.
+    con.execute("INSERT INTO tracks (id, path, filename) "
+                "VALUES (9,'/9.wav','Other Thing-Cloonee.wav')")
+    con.commit()
+    assert who_made_it(con, 9)[1] is None
+    con.execute("INSERT INTO tracks (id, path, filename, artist) "
+                "VALUES (2,'/b.wav','More-Cloonee.wav','cloonee')")
+    con.commit()
+    correct(con, 2, "tech", mode="move")
+    who, crate, n = who_made_it(con, 9)
+    assert crate == "tech" and who == "cloonee"
+
+
+def test_the_artist_tag_still_wins_over_the_filename(tmp_path):
+    from crateapp.crates import who_made_it
+    con = connect(tmp_path / "l.db")
+    for i, art in ((1, "realartist"), (2, "realartist")):
+        con.execute("INSERT INTO tracks (id, path, filename, artist) "
+                    "VALUES (?,?,?,?)", (i, f"/{i}.wav", f"X-Someone Else.wav", art))
+        con.commit()
+        correct(con, i, "house", mode="move")
+    con.execute("INSERT INTO tracks (id, path, filename, artist) "
+                "VALUES (9,'/9.wav','Y-Someone Else.wav','realartist')")
+    con.commit()
+    assert who_made_it(con, 9)[0] == "realartist"
