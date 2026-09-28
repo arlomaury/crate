@@ -32,3 +32,7 @@ crate_validation/
 models/
 
 .DS_Store
+
+# Generated handoff bundles - regenerate with make_handoff.py
+HANDOFF.md
+HANDOFF-FULL.md
