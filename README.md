@@ -1,12 +1,54 @@
 # Crate
 
-Analyses a folder of audio and works out, from the sound itself, what each track
-is: tempo, key, genre, whether it is an acapella, and where the drops and
-breakdowns are. Nothing reads the filename to decide a genre.
+**A local app that sorts a DJ library into crates by listening to the audio, learns from every correction, and builds mixable sets.**
 
-Built for a Rekordbox → USB → CDJ workflow.
+Crate analyses each track's tempo, key, structure (intro, buildup, drop, breakdown, outro), and genre, then files it into the DJ's own crates. Anything it isn't sure about goes to a review queue instead of being silently misfiled. Results export straight to Rekordbox, with hot cues on every downbeat-aligned drop and breakdown.
 
-## Install
+![Track view: crate list, BPM and key, and the energy timeline with cue points](docs/screenshots/track-view.png)
+
+![Set builder: ordered set with transition scores, key and tempo compatibility, and mix-out / mix-in windows](docs/screenshots/set-builder.png)
+
+<sub>Screenshots use a demo library of made-up tracks.</sub>
+
+## Highlights
+
+- **Sorts from the sound, not the filename.** Discogs-EffNet audio embeddings (Essentia/TensorFlow) feed a classifier trained on the DJ's own crates.
+- **93% held-out accuracy** on 530 distinct labelled recordings, up from about 75% for audio alone, by combining an acapella detector, the store's genre tag, and artist history ahead of the audio model. Every step was measured. See `CLAUDE.md` for the experiments that didn't work.
+- **Honest when unsure.** Low-confidence tracks land in *Needs review*. Corrections ("move here" / "also add") retrain the model in the background.
+- **Set builder.** Scores every transition on tempo, Camelot key, energy, and sound, then picks exact mix-out and mix-in points. You can preview a transition before playing it.
+- **Rekordbox export.** Generates `rekordbox.xml` with genre, BPM, key, a playlist per crate, and coloured hot cues, or exports crates as folders.
+- **Never touches your music.** The library is read-only. Crates live in a local SQLite database.
+- **Private by design.** Runs entirely on your machine. The local server only accepts requests from its own page.
+- **252 automated tests** (`pytest`).
+
+## Tech stack
+
+Python 3.9+ · Essentia + TensorFlow (Discogs-EffNet) · NumPy · scikit-learn (training only) · SQLite · stdlib `http.server` · vanilla JavaScript UI, no framework or build step.
+
+## The sorting app
+
+```bash
+./setup.sh          # once: creates .venv, installs Essentia, downloads models
+./crate.command     # or double-click it in Finder
+```
+
+The app opens at `http://127.0.0.1:8420`. Paste a music folder path, click **Add**, then **Start sorting**. The catalogue is stored in `~/.crate/library.db`, and only new or changed files are analysed on later runs.
+
+## Tests
+
+```bash
+source .venv/bin/activate
+pip install pytest
+python -m pytest -q
+```
+
+---
+
+## Command-line analyser
+
+The original one-shot analyser is still included. It writes a standalone viewer and a Rekordbox XML for a single folder.
+
+### Install
 
 ```bash
 chmod +x setup.sh
@@ -15,7 +57,7 @@ chmod +x setup.sh
 
 Takes a few minutes — TensorFlow is a large download. Only needed once.
 
-## Run
+### Run
 
 ```bash
 source .venv/bin/activate
@@ -117,3 +159,7 @@ read at either rate; the confidence score usually shows when this happens.
 atonal tracks. The confidence score reflects this.
 
 Cross-check anything flagged before you trust it in a set.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

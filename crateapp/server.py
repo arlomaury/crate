@@ -20,6 +20,10 @@ from crateapp.scanner import scan
 
 STATIC = Path(__file__).resolve().parent / "static"
 
+# Hostnames a request may legitimately carry in Host / Origin. Anything else
+# is another website trying to reach the local API (see Handler._guard).
+_LOCAL_NAMES = {"127.0.0.1", "localhost", "::1"}
+
 
 class ApiError(Exception):
     """A clean, expected failure that should become a 4xx JSON error rather
@@ -85,6 +89,14 @@ def make_app(con, model_path, runner=None):
         def log_message(self, *a):
             pass                                   # keep the terminal readable
 
+        def end_headers(self):
+            # Defence-in-depth headers on every response: no MIME sniffing,
+            # no framing by other sites, and no referrer leaking track paths.
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("X-Frame-Options", "DENY")
+            self.send_header("Referrer-Policy", "no-referrer")
+            super().end_headers()
+
         def _send(self, obj, code=200):
             body = json.dumps(obj, default=str).encode()
             self.send_response(code)
@@ -92,6 +104,40 @@ def make_app(con, model_path, runner=None):
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
+
+        def _guard(self, method):
+            """Refuse requests that did not come from Crate's own page.
+
+            Binding to 127.0.0.1 keeps the network out, but not other
+            websites open in the same browser: any page can fire a request
+            at http://127.0.0.1:8420, and the API can scan folders and write
+            exports to disk. Three checks close that off:
+
+            - Host must be a loopback name. Stops DNS rebinding, where an
+              attacker's domain is re-pointed at 127.0.0.1 to read responses.
+            - Origin, when the browser sends one, must be loopback too.
+              Stops cross-site form posts and fetches.
+            - POSTs must be application/json. A cross-site page can only send
+              that after a CORS preflight, which this server never approves.
+
+            Returns True if the request may proceed.
+            """
+            host = (self.headers.get("Host") or "").rsplit(":", 1)[0].strip("[]").lower()
+            if host not in _LOCAL_NAMES:
+                self._send({"error": "forbidden host"}, 403)
+                return False
+            origin = self.headers.get("Origin")
+            if origin is not None:
+                o = urlsplit(origin)
+                if o.scheme != "http" or (o.hostname or "").lower() not in _LOCAL_NAMES:
+                    self._send({"error": "forbidden origin"}, 403)
+                    return False
+            if method == "POST":
+                ctype = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+                if ctype != "application/json":
+                    self._send({"error": "Content-Type must be application/json"}, 415)
+                    return False
+            return True
 
         def _send_error(self, err):
             self._send({"error": err.message}, err.code)
@@ -144,6 +190,8 @@ def make_app(con, model_path, runner=None):
         # -- routing -------------------------------------------------------
 
         def do_GET(self):
+            if not self._guard("GET"):
+                return
             path = urlsplit(self.path).path
 
             if path == "/" or path.startswith("/static/"):
@@ -193,6 +241,8 @@ def make_app(con, model_path, runner=None):
             return self._send({"error": "not found"}, 404)
 
         def do_POST(self):
+            if not self._guard("POST"):
+                return
             try:
                 payload = self._read_json()
 

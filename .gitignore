@@ -36,3 +36,21 @@ models/
 # Generated handoff bundles - regenerate with make_handoff.py
 HANDOFF.md
 HANDOFF-FULL.md
+
+# Secrets and local environment - never commit
+.env
+.env.*
+*.pem
+*.key
+
+# Exported Rekordbox collections and spreadsheets from your real library
+rekordbox*.xml
+library.csv
+results.json
+viewer.html
+
+# Tooling caches
+.pytest_cache/
+.idea/
+.vscode/
+*.log
