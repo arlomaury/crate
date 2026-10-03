@@ -98,3 +98,33 @@ def test_bad_field_types_are_400_not_500(base, path, payload):
 
 def test_huge_track_id_is_400(base):
     assert status(base + "/api/track/99999999999999999999")[0] == 400
+
+
+def test_other_localhost_ports_are_refused(base):
+    code, _ = status(base + "/api/lock", data=json.dumps({"crate": "x"}).encode(),
+                     headers={"Content-Type": "application/json", "Origin": "http://localhost:3000"})
+    assert code == 403
+
+
+def test_huge_preview_position_is_not_a_500(base):
+    assert status(base + "/api/preview/1?at=1e308")[0] == 404     # clamped; then no such track
+
+
+def test_rekordbox_export_never_overwrites_other_files(base, tmp_path):
+    song = tmp_path / "song.wav"
+    song.write_bytes(b"RIFF....WAVE")
+    other_xml = tmp_path / "notes.xml"
+    other_xml.write_text("<notes/>")
+    for dest in (str(song), str(other_xml), str(tmp_path), "relative/rekordbox.xml"):
+        code, _ = status(base + "/api/export", data=json.dumps({"kind": "rekordbox", "dest": dest}).encode(),
+                         headers={"Content-Type": "application/json"})
+        assert code == 400, dest
+    assert song.read_bytes() == b"RIFF....WAVE" and other_xml.read_text() == "<notes/>"
+    out = tmp_path / "out" / "rekordbox.xml"
+    for _ in range(2):                                   # re-exporting over our own file is fine
+        req = urllib.request.Request(base + "/api/export",
+                                     data=json.dumps({"kind": "rekordbox", "dest": str(out)}).encode(),
+                                     headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req) as r:
+            assert json.loads(r.read())["dest"] == str(out.resolve())
+    assert b"<DJ_PLAYLISTS" in out.read_bytes()

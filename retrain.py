@@ -163,7 +163,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--xml", default=str(Path.home() / "Documents" / "rek.xml"))
     ap.add_argument("--db", default=str(Path.home() / ".crate" / "library.db"))
-    ap.add_argument("--model", default="crate_model.json")
+    ap.add_argument("--model", default=str(Path.home() / ".crate" / "crate_model.json"))
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
 

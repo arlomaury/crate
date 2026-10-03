@@ -182,5 +182,26 @@ def export_rekordbox(con, dest):
         L.append('      </NODE>')
     L += ['    </NODE>', '  </PLAYLISTS>', '</DJ_PLAYLISTS>']
 
-    Path(dest).expanduser().write_text("\n".join(L), encoding="utf-8")
+    out = Path(dest).expanduser()
+    check_rekordbox_dest(out)
+    tmp = out.with_name(f".{out.name}.part")
+    tmp.write_text("\n".join(L), encoding="utf-8")
+    tmp.replace(out)
     return len(tracks)
+
+
+def check_rekordbox_dest(path):
+    """Refuse any destination that is not an .xml file, or that already
+    holds something other than a previous Rekordbox export. A mistyped or
+    pasted path must never be able to overwrite a track or anything else."""
+    path = Path(path)
+    if path.suffix.lower() != ".xml":
+        raise ValueError("the Rekordbox export must be an .xml file, e.g. ~/Desktop/rekordbox.xml")
+    if path.exists():
+        if not path.is_file():
+            raise ValueError(f"{path} is a folder, not a file")
+        with open(path, "rb") as f:
+            head = f.read(4096)
+        if b"<DJ_PLAYLISTS" not in head:
+            raise ValueError(f"{path} already exists and is not a Rekordbox export - "
+                             "choose another name so it is not overwritten")

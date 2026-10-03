@@ -725,3 +725,39 @@ def test_correcting_a_removed_track_changes_nothing(tmp_path):
     with pytest.raises(ValueError, match="no such track"):
         correct(con, 424242, "Ghost Crate", mode="move")
     assert con.execute("SELECT count(*) FROM crates WHERE name='Ghost Crate'").fetchone()[0] == 0
+
+
+def _filing(con, tid=1):
+    return sorted((r["name"], r["source"], r["band"]) for r in con.execute(
+        "SELECT c.name, a.source, a.band FROM assignments a JOIN crates c ON c.id=a.crate_id "
+        "WHERE a.track_id=?", (tid,)))
+
+
+def test_reanalysis_never_touches_the_djs_own_filing(con):
+    auto_assign(con, 1, {"crate": "House", "band": "uncertain", "similarity": 0.7})
+    correct(con, 1, mode="confirm")
+    before = _filing(con)
+    assert before == [("House", "human", "confident")]
+    # The file's tags were edited, so it is analysed and classified again.
+    auto_assign(con, 1, {"crate": "House", "band": "uncertain", "similarity": 0.6})
+    assert _filing(con) == before
+    auto_assign(con, 1, {"crate": "Tech", "band": "confident", "similarity": 0.9})
+    assert _filing(con) == before
+
+
+def test_moving_to_the_crate_it_is_already_in_is_a_real_move(con):
+    auto_assign(con, 1, {"crate": "House", "band": "uncertain", "similarity": 0.7})
+    correct(con, 1, "House", mode="move")
+    assert _filing(con) == [("House", "human", "confident")]
+    assert con.execute("SELECT was_error FROM corrections").fetchone()["was_error"] == 0
+    correct(con, 1, "Tech", mode="move")                 # a later move still moves it
+    assert _filing(con) == [("Tech", "human", "confident")]
+
+
+def test_also_add_on_a_disputed_track_resolves_it_and_a_later_move_works(con):
+    auto_assign(con, 1, {"crate": "House", "band": "confident", "similarity": 0.9, "disputed": True})
+    assert [r["id"] for r in disputed(con)] == [1]
+    correct(con, 1, "Dubstep", mode="add", was_error=False)
+    assert disputed(con) == []
+    correct(con, 1, "Dubstep", mode="move")
+    assert _filing(con) == [("Dubstep", "human", "confident")]

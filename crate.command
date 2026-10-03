@@ -9,6 +9,13 @@ cd "$(dirname "$0")" || exit 1
 PORT=8420
 URL="http://127.0.0.1:$PORT"
 
+# macOS has `open`; most Linux desktops have `xdg-open`.
+open_url () {
+  if command -v open >/dev/null 2>&1; then open "$1"
+  elif command -v xdg-open >/dev/null 2>&1; then xdg-open "$1" >/dev/null 2>&1
+  else echo "Open $1 in your browser."; fi
+}
+
 if [ ! -d .venv ]; then
   echo "Setup has not been run yet."
   echo "Run ./setup.sh first, then double-click this again."
@@ -21,7 +28,7 @@ source .venv/bin/activate
 # Already up? Just bring the tab forward.
 if curl -fs "$URL/api/state" >/dev/null 2>&1; then
   echo "Crate is already running."
-  open "$URL"
+  open_url "$URL"
   exit 0
 fi
 
@@ -32,16 +39,18 @@ from pathlib import Path
 from crateapp.db import connect
 from crateapp.runner import Runner
 from crateapp.server import serve
+from crateapp.model_file import user_model_path
 
 port = int(sys.argv[1])
-db = Path.home() / ".crate" / "library.db"
-db.parent.mkdir(parents=True, exist_ok=True)
-model = Path(__file__).resolve().parent / "crate_model.json" \
-    if "__file__" in dir() else "crate_model.json"
+crate_dir = Path.home() / ".crate"
+# The model lives beside the library it was trained from, never in this folder
+# (see crateapp/model_file.py). Decide where BEFORE connect() creates the db.
+model = user_model_path(crate_dir, bundled=Path.cwd() / "crate_model.json")
+db = crate_dir / "library.db"
 
 con = connect(db)
-runner = Runner(db, "crate_model.json")
-serve(con, "crate_model.json", port=port, runner=runner)
+runner = Runner(db, str(model))
+serve(con, str(model), port=port, runner=runner)
 PY
 SERVER_PID=$!
 
@@ -56,12 +65,12 @@ if ! curl -fs "$URL/api/state" >/dev/null 2>&1; then
   echo "Crate failed to start. Run this to see why:"
   echo "  cd \"$(pwd)\" && source .venv/bin/activate && python -c \\"
   echo "    \"from crateapp.db import connect; from crateapp.server import serve; \\"
-  echo "     serve(connect('~/.crate/library.db'), 'crate_model.json')\""
+  echo "     from pathlib import Path; serve(connect(Path.home()/'.crate/library.db'), str(Path.home()/'.crate/crate_model.json'))\""
   read -r -p "Press return to close."
   exit 1
 fi
 
-open "$URL"
+open_url "$URL"
 echo "Crate is running at $URL"
 echo "Close this window to stop it."
 wait "$SERVER_PID"

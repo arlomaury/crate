@@ -66,6 +66,13 @@ def auto_assign(con, track_id, result):
     con.execute("DELETE FROM assignments WHERE track_id=? AND source='auto'",
                (track_id,))
     crate = result.get("crate")
+    if con.execute("SELECT 1 FROM assignments WHERE track_id=? AND source='human'",
+                   (track_id,)).fetchone():
+        # The DJ already filed this track. Re-analysis (its tags were edited,
+        # say) must never replace or add to their decision - those rows are
+        # the training data, and retrain.py protects them the same way.
+        con.commit()
+        return
     if crate is None or is_locked(con, crate):
         # A locked crate is the DJ's alone. Refused here as well as upstream,
         # so no future caller can route around it.
@@ -87,9 +94,11 @@ def correct(con, track_id, to_crate=None, mode="move", was_error=None):
     mode='move' - the track leaves its current primary crate (its 'auto'
         assignment, or a previous move's 'human' assignment - see below) for
         `to_crate`. The model's original placement was therefore wrong: this
-        is ALWAYS recorded as an error (was_error=1), regardless of what the
-        caller passes for `was_error` - there is no CHECK constraint
-        enforcing this in the schema, so the guarantee lives here.
+        is recorded as an error (was_error=1), regardless of what the caller
+        passes for `was_error` - there is no CHECK constraint enforcing this
+        in the schema, so the guarantee lives here. The one exception is a
+        move to a crate the track is already in: that is agreement ("this
+        crate, and only this one"), recorded with was_error=0.
 
         A move clears the track's previous *primary* placement, which is
         either its source='auto' row, or a source='human' row left by an
@@ -172,12 +181,9 @@ def correct(con, track_id, to_crate=None, mode="move", was_error=None):
     # Correct - and recording it as the model being wrong both understates
     # the measured accuracy and teaches the learning loop the opposite of
     # what they meant. 35 of the first 152 corrections were this.
-    if mode == "move":
-        already = con.execute(
-            "SELECT 1 FROM assignments WHERE track_id=? AND crate_id=?",
-            (track_id, to_id)).fetchone()
-        if already:
-            mode = "confirm"
+    already = con.execute(
+        "SELECT 1 FROM assignments WHERE track_id=? AND crate_id=?",
+        (track_id, to_id)).fetchone() is not None
 
     from_id = None
     if mode == "move":
@@ -189,12 +195,17 @@ def correct(con, track_id, to_crate=None, mode="move", was_error=None):
         con.execute(
             f"DELETE FROM assignments WHERE track_id=? AND ({primary})",
             (track_id,))
-        was_error = True  # a move is always a correction of a wrong auto placement
+        # A move is a correction of a wrong placement - unless the track was
+        # already in that crate, which is the DJ saying "this one, and only
+        # this one". It still becomes their filing (and leaves every other
+        # primary crate), but it is agreement, not an error.
+        was_error = not already
         band = "confident"
     else:
+        # Reviewed: the automatic placement stays, and is no longer flagged.
         con.execute(
-            "UPDATE assignments SET band='confirmed' "
-            "WHERE track_id=? AND source='auto' AND band='uncertain'",
+            "UPDATE assignments SET band='confirmed', disputed=0 "
+            "WHERE track_id=? AND source='auto' AND (band='uncertain' OR disputed=1)",
             (track_id,))
         band = "added"
 

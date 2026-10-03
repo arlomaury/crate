@@ -56,6 +56,8 @@ from pathlib import Path
 
 import numpy as np
 
+from crateapp.model_file import read_model, write_model
+
 # Below this cosine to the nearest crate, a track is unlike anything filed.
 # Measured: across the labelled set the 1st percentile of cosine-to-nearest-
 # crate is 0.574, so this sits just under it - a track below it is more
@@ -147,7 +149,7 @@ class Classifier:
     """
 
     def __init__(self, model_path):
-        data = json.loads(Path(model_path).read_text())
+        data = read_model(model_path)
         self.names = sorted(data.get("crates", {}))
         mat = np.array([data["crates"][n]["centroid"] for n in self.names],
                        dtype=np.float32) if self.names else np.zeros((0, 0),
@@ -345,12 +347,11 @@ def train(con, model_path, human_only=True, min_per_class=5):
     usable = np.array([counts[c] >= min_per_class for c in y])
     thin = sorted(c for c, n in counts.items() if n < min_per_class)
 
-    doc = {}
     path = Path(model_path)
-    if path.exists():
-        # Preserve provenance and anything else living at the top level -
-        # overwriting the whole document would silently drop it.
-        doc = json.loads(path.read_text())
+    # Preserve provenance and anything else living at the top level -
+    # overwriting the whole document would silently drop it. An unreadable
+    # file is treated as empty rather than blocking every future retrain.
+    doc = read_model(path)
 
     # Centroids for every crate, including the thin ones: they are the
     # "is this like anything I own" signal, and a mean needs far fewer
@@ -412,7 +413,7 @@ def train(con, model_path, human_only=True, min_per_class=5):
         doc.pop("linear", None)
         summary["reason"] = "fewer than two crates have enough examples"
 
-    path.write_text(json.dumps(doc))
+    write_model(path, doc)
     return summary
 
 

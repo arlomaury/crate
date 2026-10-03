@@ -145,8 +145,8 @@ async function doExport(kind) {
     const r = await api.post("/api/export", { dest, kind });
     const n = r.exported;
     status(typeof n === "object"
-      ? `Exported ${Object.values(n).reduce((a, b) => a + b, 0)} tracks · ${Object.keys(n).length} folders`
-      : `Exported ${n} tracks`);
+      ? `Exported ${Object.values(n).reduce((a, b) => a + b, 0)} tracks · ${Object.keys(n).length} folders to ${r.dest}`
+      : `Exported ${n} tracks to ${r.dest}`);
     if (r.skipped) fail(`${r.skipped} track${r.skipped === 1 ? " was" : "s were"} skipped because the file is no longer on disk (e.g. ${r.skippedExamples[0]}). Re-scan to update the library.`);
   } catch (e) { fail(e.message); }
 }
@@ -163,7 +163,7 @@ function fail(m) {
 
 function renderSidebar() {
   const side = $("#sidebar");
-  const review = state.uncertain + state.unsorted;
+  const review = state.uncertain + state.unsorted + (state.disputed || 0);
   const sig = ["__review__", "__sets__",
                ...state.crates.map((c) => c.name)].join("\u0000");
 
@@ -358,14 +358,24 @@ async function buildReview() {
               el("span", "sub", rows.length ? `${rows.length} waiting` : "all clear"));
   frag.append(head);
 
+  // Teaching a tag is a different kind of act from correcting a track: one
+  // decision settles every other track carrying that tag, so it leads - and
+  // it stays even when the queue itself is clear.
+  if (data.tag_gaps && data.tag_gaps.length) frag.append(tagGapGroup(data.tag_gaps));
+
+  const firstRun = !state.crates.length;
   if (!rows.length) {
-    frag.append(el("p", "quiet-line", "Nothing to review."));
+    frag.append(el("p", "quiet-line", firstRun
+      ? "Start by pasting the path to your music folder above, then Add and Start sorting."
+      : "Nothing to review."));
     return frag;
   }
-
-  // Teaching a tag is a different kind of act from correcting a track: one
-  // decision settles every other track carrying that tag, so it leads.
-  if (data.tag_gaps && data.tag_gaps.length) frag.append(tagGapGroup(data.tag_gaps));
+  if (firstRun) {
+    // A new library knows nothing about the DJ's crates yet; say how it learns.
+    frag.append(el("p", "quiet-line",
+      "Crate learns your crates from you. Pick \u201cNew crate\u2026\u201d next to a track and press Move to file it. " +
+      "After about five tracks in each of two crates it starts filing the rest, and sends anything it is unsure of here."));
+  }
 
   const groups = { uncertain: [], disputed: [], unknown: [], failed: [] };
   for (const r of rows) groups[kindOf(r.t, r.g).k].push(r);
@@ -447,7 +457,9 @@ function reviewRow(track, group) {
   // crate - otherwise "Move" quietly files it somewhere the DJ never chose.
   if (track.crate) sel.value = track.crate;
   const fresh = el("input"); fresh.type = "text"; fresh.placeholder = "Crate name";
-  fresh.classList.add("hidden");
+  // With no crates yet "New crate…" is the only option and already selected,
+  // so no change event will ever fire - show the name box from the start.
+  fresh.classList.toggle("hidden", sel.value !== "__new__");
   sel.addEventListener("change", () => {
     fresh.classList.toggle("hidden", sel.value !== "__new__");
     if (sel.value === "__new__") fresh.focus();
@@ -607,8 +619,9 @@ function setControls(pool) {
   seed.setAttribute("list", "seed-list");
   const list = el("datalist"); list.id = "seed-list";
   for (const t of pool.slice(0, 900)) {
-    const o = new Option(t.filename, String(t.id));
-    o.label = t.filename;
+    // The value is what lands in the box when a suggestion is picked, so it
+    // must be the name the lookup below understands - not the id.
+    const o = new Option(t.filename, t.filename);
     list.append(o);
   }
   const current = pool.find((t) => t.id === s.seed);
@@ -1256,7 +1269,8 @@ function panelActions(track) {
   if (filed) sel.value = filed;
 
   const fresh = el("input"); fresh.type = "text";
-  fresh.placeholder = "Crate name"; fresh.classList.add("hidden");
+  fresh.placeholder = "Crate name";
+  fresh.classList.toggle("hidden", sel.value !== "__new__");   // shown when it is the only choice
   sel.addEventListener("change", () => {
     fresh.classList.toggle("hidden", sel.value !== "__new__");
     if (sel.value === "__new__") fresh.focus();
@@ -1565,7 +1579,7 @@ async function poll() {
       // crate the DJ is reading would yank the list away under them. And
       // even the queue is only rebuilt when its contents actually changed -
       // a timed rebuild threw away whatever crate was half-chosen in a row.
-      const queue = `${state.uncertain}|${state.unsorted}`;
+      const queue = `${state.uncertain}|${state.unsorted}|${state.disputed || 0}`;
       if (state.view === "__review__" && queue !== lastReview) {
         lastReview = queue;
         await renderContent();

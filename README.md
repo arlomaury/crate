@@ -19,7 +19,7 @@ Crate analyses each track's tempo, key, structure (intro, buildup, drop, breakdo
 - **Rekordbox export.** Generates `rekordbox.xml` with genre, BPM, key, a playlist per crate, and coloured hot cues, or exports crates as folders.
 - **Never touches your music.** The library is read-only. Crates live in a local SQLite database.
 - **Private by design.** Runs entirely on your machine. The local server only accepts requests from its own page.
-- **272 automated tests** (`pytest`).
+- **281 automated tests** (`pytest`).
 
 ## Tech stack
 
@@ -33,6 +33,10 @@ Python 3.9+ · Essentia + TensorFlow (Discogs-EffNet) · NumPy · scikit-learn (
 ```
 
 The app opens at `http://127.0.0.1:8420`. Paste a music folder path, click **Add**, then **Start sorting**. The catalogue is stored in `~/.crate/library.db`, and only new or changed files are analysed on later runs.
+
+**Using it on your own library.** Crate runs on your own computer: macOS, or Linux by running `./crate.command` from a terminal. It needs Python 3.9–3.14 and about 1 GB of disk for Essentia and TensorFlow. Your music is never uploaded anywhere or modified.
+
+It starts knowing nothing about *your* crates — it learns them from you. After the first scan, every track shows its tempo, key and structure straight away. Then file a handful of tracks into crates of your own (five or so per crate is enough to start). Crate learns from those and files the rest, sending anything it is unsure of to *Needs review*. Every correction makes it better. Your trained model lives in `~/.crate/crate_model.json`, next to the library database. The `crate_model.json` in this repository is the author's own model, kept for reference and never written to.
 
 ## Tests
 

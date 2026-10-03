@@ -15,7 +15,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 from crateapp import crates as crate_ops
 from crateapp.classifier import rebuild_centroids
 from crateapp.db import LOCK
-from crateapp.exporters import export_folders, export_rekordbox
+from crateapp.exporters import check_rekordbox_dest, export_folders, export_rekordbox
 from crateapp.sets import build_set, dedupe, load_pool, neighbours
 from crateapp.scanner import scan
 
@@ -79,6 +79,10 @@ class _Retrainer:
         self._run()
 
 
+_CONVERT_GUARD = threading.Lock()
+_CONVERT_LOCKS = {}
+
+
 def make_app(con, model_path, runner=None):
     retrainer = _Retrainer(con, model_path)
     class Handler(BaseHTTPRequestHandler):
@@ -116,7 +120,8 @@ def make_app(con, model_path, runner=None):
 
             - Host must be a loopback name. Stops DNS rebinding, where an
               attacker's domain is re-pointed at 127.0.0.1 to read responses.
-            - Origin, when the browser sends one, must be loopback too.
+            - Origin, when the browser sends one, must be this server itself
+              (loopback, and the same port).
               Stops cross-site form posts and fetches.
             - POSTs must be application/json. A cross-site page can only send
               that after a CORS preflight, which this server never approves.
@@ -130,7 +135,10 @@ def make_app(con, model_path, runner=None):
             origin = self.headers.get("Origin")
             if origin is not None:
                 o = urlsplit(origin)
-                if o.scheme != "http" or (o.hostname or "").lower() not in _LOCAL_NAMES:
+                # The port matters too: a dev server or any other app on
+                # another localhost port is a different site.
+                if (o.scheme != "http" or (o.hostname or "").lower() not in _LOCAL_NAMES
+                        or (o.port or 80) != self.server.server_port):
                     self._send({"error": "forbidden origin"}, 403)
                     return False
             if method == "POST":
@@ -444,27 +452,40 @@ def make_app(con, model_path, runner=None):
 
             self.CACHE.mkdir(parents=True, exist_ok=True)
             dst = self.CACHE / f"{row['id']}-{int(src.stat().st_mtime)}.wav"
-            if not dst.exists():
-                import wave
+            # The browser often asks for the same track twice at once (the
+            # player and a range request). One conversion per file: the
+            # second request waits for the first instead of racing it.
+            with _CONVERT_GUARD:
+                lock = _CONVERT_LOCKS.setdefault(str(dst), threading.Lock())
+            with lock:
+                if not dst.exists():
+                    self._convert(src, dst)
+            return dst, "audio/wav"
 
-                import numpy as np
-                import essentia.standard as es
-                try:
-                    audio, sr, ch, _, _, _ = es.AudioLoader(filename=str(src))()
-                except Exception as e:
-                    raise ApiError(f"could not decode audio: {e}", code=422)
-                pcm = np.clip(np.asarray(audio, dtype="float32"), -1.0, 1.0)
-                pcm = (pcm * 32767.0).astype("<i2")
-                # Written to a temp name and renamed, so a half-converted file
-                # is never served if this dies midway.
-                tmp = dst.with_suffix(".part")
+        def _convert(self, src, dst):
+            import wave
+
+            import numpy as np
+            import essentia.standard as es
+            try:
+                audio, sr, ch, _, _, _ = es.AudioLoader(filename=str(src))()
+            except Exception as e:
+                raise ApiError(f"could not decode audio: {e}", code=422)
+            pcm = np.clip(np.asarray(audio, dtype="float32"), -1.0, 1.0)
+            pcm = (pcm * 32767.0).astype("<i2")
+            # Written to a temp name and renamed, so a half-converted file
+            # is never served if this dies midway.
+            tmp = dst.with_name(f"{dst.stem}.{threading.get_ident()}.part")
+            try:
                 with wave.open(str(tmp), "wb") as w:
                     w.setnchannels(int(ch) or 1)
                     w.setsampwidth(2)
                     w.setframerate(int(sr))
                     w.writeframes(pcm.tobytes())
                 tmp.replace(dst)
-            return dst, "audio/wav"
+            finally:
+                if tmp.exists():
+                    tmp.unlink()
 
         def _audio(self, raw_id):
             """The whole track, seekable - so any song can be played at any
@@ -599,7 +620,7 @@ def make_app(con, model_path, runner=None):
                 if not math.isfinite(v):
                     raise ApiError(f"{key} must be a finite number")
                 return v
-            at = max(0.0, num("at", 0.0))
+            at = min(max(0.0, num("at", 0.0)), 24 * 3600.0)   # no track is a day long
             length = min(self.MAX_PREVIEW_SEC, max(0.5, num("len", 20.0)))
 
             with LOCK:
@@ -702,19 +723,27 @@ def make_app(con, model_path, runner=None):
         def _export(self, payload):
             dest = self._field(payload, "dest", "str", required=True)
             kind = self._field(payload, "kind", "str", default="folders")
+            if not Path(dest).expanduser().is_absolute():
+                # A relative path would land wherever the server was started
+                # from (the app's own folder) and the DJ would never find it.
+                raise ApiError("give a full path, e.g. ~/Desktop/Crates or ~/Desktop/rekordbox.xml")
+            dest = str(Path(dest).expanduser().resolve())
             try:
                 with LOCK:
                     if kind == "folders":
                         skipped = []
                         counts = export_folders(con, dest, skipped)
-                        return {"exported": counts, "skipped": len(skipped),
+                        return {"exported": counts, "dest": dest, "skipped": len(skipped),
                                 "skippedExamples": skipped[:5]}
                     if kind == "rekordbox":
                         # export_rekordbox does not create its parent directory
                         # (unlike export_folders, which does) - do it here or a
                         # nested destination path raises FileNotFoundError.
-                        Path(dest).expanduser().resolve().parent.mkdir(parents=True, exist_ok=True)
-                        return {"exported": export_rekordbox(con, dest)}
+                        check_rekordbox_dest(Path(dest))
+                        Path(dest).parent.mkdir(parents=True, exist_ok=True)
+                        return {"exported": export_rekordbox(con, dest), "dest": dest}
+            except ValueError as e:
+                raise ApiError(str(e))
             except OSError as e:
                 # Bad destination: not writable, a file where a folder is
                 # needed, a name too long...  The DJ's mistake, not a crash.
