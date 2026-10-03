@@ -80,7 +80,7 @@ and **declined** — do not add them without asking again.
 | `pooling_experiment.py` | Tests whether a different reduction of the per-frame embeddings beats the mean. It does not — see the dead-ends table. Cache at `~/.crate/pooling.npz`. |
 | `retrain.py` | Resets ground truth from the DJ's Rekordbox export and retrains. Run after re-exporting `rek.xml`. |
 | — | Removing a track (`crates.remove_track`, `POST /api/remove`) drops the DJ's *record* of it and **never the file**. Two clicks in the UI; there is a test asserting the bytes on disk survive. |
-| `crate_model.json` | Trained weights + centroids + provenance. |
+| `crate_model.json` | The author's trained weights + centroids + provenance, kept for reference and **never written**. The live model is `~/.crate/crate_model.json` (`crateapp/model_file.py`), seeded from this file once for an existing library; a new user starts with none. |
 | `crate.command` | Double-click launcher. `~/Desktop/Crate.app` wraps it. |
 | `viewer_template.html` | The original standalone viewer (superseded by the app, still works). |
 
@@ -91,7 +91,7 @@ lowercase ones). `MAIN`, `PARTY`, `REMIX` are **set lists, not genres**;
 `AllSongs` and `Contents` are containers. Both groups are excluded — filing by
 them would teach the model that "tracks I play at parties" is a sound.
 
-Library database: `~/.crate/library.db`. Models: `~/.crate/models`. Converted
+Library database: `~/.crate/library.db`. Trained crate model: `~/.crate/crate_model.json`. Models: `~/.crate/models`. Converted
 audio cache: `~/.crate/cache`.
 
 ---
