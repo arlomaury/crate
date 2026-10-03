@@ -147,6 +147,7 @@ async function doExport(kind) {
     status(typeof n === "object"
       ? `Exported ${Object.values(n).reduce((a, b) => a + b, 0)} tracks · ${Object.keys(n).length} folders`
       : `Exported ${n} tracks`);
+    if (r.skipped) fail(`${r.skipped} track${r.skipped === 1 ? " was" : "s were"} skipped because the file is no longer on disk (e.g. ${r.skippedExamples[0]}). Re-scan to update the library.`);
   } catch (e) { fail(e.message); }
 }
 

@@ -188,3 +188,38 @@ def test_xml_survives_control_characters_in_names(tmp_path):
     out = tmp_path / "rb.xml"
     export_rekordbox(c, out)
     xml.dom.minidom.parse(str(out))          # raises if the XML is invalid
+
+
+def test_export_expands_home_directory(tmp_path, monkeypatch):
+    """The UI suggests '~/Desktop/crate_export'; that must mean the home
+    folder, not a directory literally named '~' wherever the app runs."""
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.chdir(tmp_path)
+    c = connect(tmp_path / "h.db")
+    src = tmp_path / "a.wav"
+    src.write_bytes(b"RIFF")
+    c.execute("INSERT INTO tracks (id, path, filename, analysed_at) VALUES (1, ?, 'a.wav', 'now')", (str(src),))
+    c.commit()
+    correct(c, 1, "House", mode="move")
+    export_folders(c, "~/crate_export")
+    export_rekordbox(c, "~/crate_export/rb.xml")
+    assert (tmp_path / "home" / "crate_export" / "House" / "a.wav").exists()
+    assert (tmp_path / "home" / "crate_export" / "rb.xml").exists()
+    assert not (tmp_path / "~").exists()
+
+
+def test_missing_file_is_skipped_not_fatal(tmp_path):
+    c = connect(tmp_path / "m.db")
+    good = tmp_path / "good.wav"
+    good.write_bytes(b"RIFF")
+    c.execute("INSERT INTO tracks (id, path, filename, analysed_at) VALUES (1, ?, 'gone.wav', 'now')",
+              (str(tmp_path / "gone.wav"),))
+    c.execute("INSERT INTO tracks (id, path, filename, analysed_at) VALUES (2, ?, 'good.wav', 'now')", (str(good),))
+    c.commit()
+    correct(c, 1, "House", mode="move")
+    correct(c, 2, "House", mode="move")
+    skipped = []
+    counts = export_folders(c, tmp_path / "out", skipped)
+    assert counts == {"House": 1}
+    assert skipped == [str(tmp_path / "gone.wav")]
+    assert (tmp_path / "out" / "House" / "good.wav").exists()

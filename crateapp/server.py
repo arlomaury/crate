@@ -171,6 +171,36 @@ def make_app(con, model_path, runner=None):
                 raise ApiError(f"missing required field: {key}")
             return payload[key]
 
+        # Typed field access.  Every value in a request body is checked here,
+        # so a wrong type is a clear 400 instead of a crash deep inside
+        # SQLite or a filesystem call.
+        _SQLITE_MAX = 2 ** 63 - 1
+
+        def _field(self, payload, key, kind, default=None, required=False):
+            if key not in payload or payload[key] is None:
+                if required:
+                    raise ApiError(f"missing required field: {key}")
+                return default
+            v = payload[key]
+            ok = {
+                "int": isinstance(v, int) and not isinstance(v, bool) and abs(v) <= self._SQLITE_MAX,
+                "str": isinstance(v, str) and 0 < len(v) <= 4096 and "\x00" not in v,
+                "bool": isinstance(v, bool),
+                "strlist": isinstance(v, list) and all(isinstance(x, str) and 0 < len(x) <= 4096 and "\x00" not in x for x in v),
+            }[kind]
+            if not ok:
+                raise ApiError(f"{key} must be {'an integer' if kind == 'int' else 'text' if kind == 'str' else 'true or false' if kind == 'bool' else 'a list of folder paths'}")
+            return v
+
+        def _path_id(self, raw_id):
+            try:
+                v = int(raw_id)
+            except ValueError:
+                raise ApiError("bad track id")
+            if abs(v) > self._SQLITE_MAX:
+                raise ApiError("bad track id")
+            return v
+
         # -- static files ------------------------------------------------
 
         def _serve_static(self, path):
@@ -258,8 +288,8 @@ def make_app(con, model_path, runner=None):
                     return self._send(self._correct(payload))
 
                 if self.path == "/api/lock":
-                    name = self._require(payload, "crate")
-                    locked = bool(payload.get("locked", True))
+                    name = self._field(payload, "crate", "str", required=True)
+                    locked = self._field(payload, "locked", "bool", default=True)
                     with LOCK:
                         if not crate_ops.set_locked(con, name, locked):
                             raise ApiError("no such crate", code=404)
@@ -268,7 +298,7 @@ def make_app(con, model_path, runner=None):
                     return self._send({"crate": name, "locked": locked})
 
                 if self.path == "/api/remove":
-                    track_id = self._require(payload, "track_id")
+                    track_id = self._field(payload, "track_id", "int", required=True)
                     with LOCK:
                         name = crate_ops.remove_track(con, track_id)
                     if name is None:
@@ -280,7 +310,7 @@ def make_app(con, model_path, runner=None):
                     return self._send({"removed": name})
 
                 if self.path == "/api/scan":
-                    folder = self._require(payload, "folder")
+                    folder = str(Path(self._field(payload, "folder", "str", required=True)).expanduser())
                     with LOCK:
                         return self._send(scan(con, folder))
 
@@ -335,13 +365,12 @@ def make_app(con, model_path, runner=None):
                 return {"tracks": self._rows(rows)}
 
         def _correct(self, payload):
-            track_id = self._require(payload, "track_id")
-            mode = payload.get("mode", "move")
+            track_id = self._field(payload, "track_id", "int", required=True)
+            mode = self._field(payload, "mode", "str", default="move")
             # A confirm has no destination: the answer is wherever the track
             # already is.
-            to_crate = (payload.get("to_crate") if mode == "confirm"
-                        else self._require(payload, "to_crate"))
-            was_error = payload.get("was_error")
+            to_crate = self._field(payload, "to_crate", "str", required=(mode != "confirm"))
+            was_error = self._field(payload, "was_error", "bool")
             with LOCK:
                 try:
                     crate_ops.correct(con, track_id, to_crate, mode=mode,
@@ -384,10 +413,7 @@ def make_app(con, model_path, runner=None):
         CACHE = Path.home() / ".crate" / "cache"
 
         def _track_row(self, raw_id):
-            try:
-                track_id = int(raw_id)
-            except ValueError:
-                raise ApiError("bad track id")
+            track_id = self._path_id(raw_id)
             with LOCK:
                 row = con.execute(
                     "SELECT id, path, filename, bpm, camelot, duration_sec "
@@ -559,10 +585,7 @@ def make_app(con, model_path, runner=None):
 
             import numpy as np
 
-            try:
-                track_id = int(raw_id)
-            except ValueError:
-                raise ApiError("bad track id")
+            track_id = self._path_id(raw_id)
 
             q = parse_qs(urlsplit(self.path).query)
             def num(key, default):
@@ -647,44 +670,60 @@ def make_app(con, model_path, runner=None):
                                for t in self._pool(crate)]}
 
         def _build_set(self, payload):
-            seed = self._require(payload, "seed_id")
+            seed = self._field(payload, "seed_id", "int", required=True)
+            length = self._field(payload, "length", "int", default=8)
+            if not 1 <= length <= 200:
+                raise ApiError("length must be between 1 and 200")
             try:
-                return build_set(self._pool(payload.get("crate")), seed,
-                                 length=int(payload.get("length", 8)),
-                                 mode=payload.get("mode", "balanced"),
-                                 arc=payload.get("arc", "steady"))
+                return build_set(self._pool(self._field(payload, "crate", "str")), seed,
+                                 length=length,
+                                 mode=self._field(payload, "mode", "str", default="balanced"),
+                                 arc=self._field(payload, "arc", "str", default="steady"))
             except ValueError as e:
                 raise ApiError(str(e))
 
         def _next(self, payload):
-            track_id = self._require(payload, "track_id")
+            track_id = self._field(payload, "track_id", "int", required=True)
+            limit = self._field(payload, "limit", "int", default=25)
+            if not 1 <= limit <= 500:
+                raise ApiError("limit must be between 1 and 500")
             try:
-                out = neighbours(self._pool(payload.get("crate")), track_id,
-                                 mode=payload.get("mode", "balanced"),
-                                 arc=payload.get("arc", "steady"),
-                                 limit=int(payload.get("limit", 25)))
+                out = neighbours(self._pool(self._field(payload, "crate", "str")), track_id,
+                                 mode=self._field(payload, "mode", "str", default="balanced"),
+                                 arc=self._field(payload, "arc", "str", default="steady"),
+                                 limit=limit)
             except ValueError as e:
                 raise ApiError(str(e))
             return {"next": out}
 
         def _export(self, payload):
-            dest = self._require(payload, "dest")
-            kind = payload.get("kind", "folders")
-            with LOCK:
-                if kind == "folders":
-                    return {"exported": export_folders(con, dest)}
-                if kind == "rekordbox":
-                    # export_rekordbox does not create its parent directory
-                    # (unlike export_folders, which does) - do it here or a
-                    # nested destination path raises FileNotFoundError.
-                    Path(dest).resolve().parent.mkdir(parents=True, exist_ok=True)
-                    return {"exported": export_rekordbox(con, dest)}
+            dest = self._field(payload, "dest", "str", required=True)
+            kind = self._field(payload, "kind", "str", default="folders")
+            try:
+                with LOCK:
+                    if kind == "folders":
+                        skipped = []
+                        counts = export_folders(con, dest, skipped)
+                        return {"exported": counts, "skipped": len(skipped),
+                                "skippedExamples": skipped[:5]}
+                    if kind == "rekordbox":
+                        # export_rekordbox does not create its parent directory
+                        # (unlike export_folders, which does) - do it here or a
+                        # nested destination path raises FileNotFoundError.
+                        Path(dest).expanduser().resolve().parent.mkdir(parents=True, exist_ok=True)
+                        return {"exported": export_rekordbox(con, dest)}
+            except OSError as e:
+                # Bad destination: not writable, a file where a folder is
+                # needed, a name too long...  The DJ's mistake, not a crash.
+                raise ApiError(f"could not export to {dest}: {e.strerror or e}")
             raise ApiError(f"unknown export kind: {kind!r}")
 
         def _start(self, payload):
             if runner is None:
                 raise ApiError("no runner configured", code=503)
-            folders = payload.get("folders")
+            folders = self._field(payload, "folders", "strlist")
+            if folders:
+                folders = [str(Path(f).expanduser()) for f in folders]
             with LOCK:
                 if folders:
                     con.execute(

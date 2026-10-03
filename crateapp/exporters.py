@@ -60,7 +60,7 @@ def _safe_folder_name(name, fallback):
     return safe or fallback
 
 
-def export_folders(con, dest):
+def export_folders(con, dest, skipped=None):
     """Real folders of real files. Uses APFS copy-on-write clones where possible,
     so a 49GB library costs almost no extra disk; falls back to a plain copy.
 
@@ -70,10 +70,12 @@ def export_folders(con, dest):
     copy that fails partway can never be mistaken for a finished one on a
     later, resumed run.
     """
-    dest = Path(dest).resolve()
+    dest = Path(dest).expanduser().resolve()
     crate_ids = {r["name"]: r["id"]
                  for r in con.execute("SELECT id, name FROM crates").fetchall()}
     counts = {}
+    if skipped is None:
+        skipped = []
     for crate, rows in _members(con).items():
         safe = _safe_folder_name(crate, f"crate-{crate_ids.get(crate, 'unknown')}")
         folder = dest / safe
@@ -99,6 +101,11 @@ def export_folders(con, dest):
         n = 0
         for r in rows:
             src = Path(r["path"])
+            if not src.is_file():
+                # Deleted or moved since the last scan.  Skip it and say so,
+                # rather than abandoning the export halfway through.
+                skipped.append(str(src))
+                continue
             if name_counts[src.name] > 1:
                 target = folder / f"{src.stem}_{r['id']}{src.suffix}"
             else:
@@ -175,5 +182,5 @@ def export_rekordbox(con, dest):
         L.append('      </NODE>')
     L += ['    </NODE>', '  </PLAYLISTS>', '</DJ_PLAYLISTS>']
 
-    Path(dest).write_text("\n".join(L), encoding="utf-8")
+    Path(dest).expanduser().write_text("\n".join(L), encoding="utf-8")
     return len(tracks)

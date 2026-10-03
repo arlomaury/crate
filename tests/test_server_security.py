@@ -77,3 +77,24 @@ def test_oversized_body_refused(base):
 def test_non_finite_preview_position_refused(base):
     assert status(base + "/api/preview/1?at=inf")[0] == 400
     assert status(base + "/api/preview/1?at=nan")[0] == 400
+
+
+@pytest.mark.parametrize("path,payload", [
+    ("/api/scan", {"folder": 5}),
+    ("/api/correct", {"track_id": 1, "to_crate": {"a": 1}}),
+    ("/api/correct", {"track_id": "1", "to_crate": "House"}),
+    ("/api/lock", {"crate": ["x"]}),
+    ("/api/remove", {"track_id": {"x": 1}}),
+    ("/api/set", {"seed_id": 1, "length": None, "mode": {}}),
+    ("/api/set", {"seed_id": 1, "length": 10 ** 9}),
+    ("/api/next", {"track_id": 1, "crate": ["x"]}),
+    ("/api/export", {"dest": 7}),
+    ("/api/export", {"dest": "/", "kind": "rekordbox"}),          # a folder, not a file
+])
+def test_bad_field_types_are_400_not_500(base, path, payload):
+    code, _ = status(base + path, data=json.dumps(payload).encode(), headers={"Content-Type": "application/json"})
+    assert code == 400, (path, payload, code)
+
+
+def test_huge_track_id_is_400(base):
+    assert status(base + "/api/track/99999999999999999999")[0] == 400
