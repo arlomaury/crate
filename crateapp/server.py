@@ -311,8 +311,11 @@ def make_app(con, model_path, runner=None):
 
                 if self.path == "/api/scan":
                     folder = str(Path(self._field(payload, "folder", "str", required=True)).expanduser())
-                    with LOCK:
-                        return self._send(scan(con, folder))
+                    try:
+                        with LOCK:
+                            return self._send(scan(con, folder))
+                    except FileNotFoundError as e:
+                        raise ApiError(str(e), code=404)
 
                 if self.path == "/api/export":
                     return self._send(self._export(payload))

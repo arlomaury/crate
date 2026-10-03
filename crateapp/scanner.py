@@ -37,15 +37,22 @@ def scan(con, folder):
     # resolves to /private/var on macOS) would make every existing track look
     # like it fell outside `folder` and get wrongly flagged missing.
     folder = Path(folder).expanduser().resolve()
+    if not folder.is_dir():
+        # Typo, or an external drive that is not plugged in.  Scanning it would
+        # flag every track stored under it as missing, so refuse instead.
+        raise FileNotFoundError(f"folder not found: {folder}")
     stats = {"added": 0, "unchanged": 0, "changed": 0, "missing": 0}
     seen = set()
 
     for p in sorted(folder.rglob("*")):
         if p.suffix.lower() not in AUDIO_EXT or p.name.startswith("._"):
             continue
-        path = str(p.resolve())
+        try:
+            path = str(p.resolve())
+            st = p.stat()
+        except OSError:
+            continue        # broken shortcut or unreadable file: skip it, keep scanning
         seen.add(path)
-        st = p.stat()
         row = con.execute("SELECT id, size, mtime FROM tracks WHERE path=?",
                           (path,)).fetchone()
         if row is None:

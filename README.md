@@ -19,7 +19,7 @@ Crate analyses each track's tempo, key, structure (intro, buildup, drop, breakdo
 - **Rekordbox export.** Generates `rekordbox.xml` with genre, BPM, key, a playlist per crate, and coloured hot cues, or exports crates as folders.
 - **Never touches your music.** The library is read-only. Crates live in a local SQLite database.
 - **Private by design.** Runs entirely on your machine. The local server only accepts requests from its own page.
-- **268 automated tests** (`pytest`).
+- **271 automated tests** (`pytest`).
 
 ## Tech stack
 

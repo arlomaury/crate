@@ -108,3 +108,25 @@ def test_read_tags_survives_an_unreadable_file(tmp_path):
     f = tmp_path / "broken.wav"
     f.write_bytes(b"not audio at all")
     assert read_tags(f) == (None, None)
+
+
+def test_broken_symlink_does_not_stop_the_scan(tmp_path):
+    from crateapp.db import connect
+    from crateapp.scanner import scan
+    lib = tmp_path / "lib"; lib.mkdir()
+    (lib / "good.wav").write_bytes(b"RIFF")
+    (lib / "dangling.mp3").symlink_to(tmp_path / "nowhere.mp3")
+    con = connect(tmp_path / "l.db")
+    assert scan(con, lib)["added"] == 1
+
+
+def test_missing_folder_is_an_error_not_a_mass_missing_flag(tmp_path):
+    import pytest
+    from crateapp.db import connect
+    from crateapp.scanner import scan
+    con = connect(tmp_path / "l.db")
+    con.execute("INSERT INTO tracks (path, filename) VALUES (?, 'a.wav')", (str(tmp_path / "drive" / "a.wav"),))
+    con.commit()
+    with pytest.raises(FileNotFoundError):
+        scan(con, tmp_path / "drive")
+    assert con.execute("SELECT missing FROM tracks").fetchone()[0] == 0

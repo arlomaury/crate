@@ -93,10 +93,19 @@ class Runner:
     def _run(self, folders):
         con = connect(self.db_path)
         try:
+            unreachable = []
             with LOCK:
                 for folder in folders:
-                    scan(con, folder)
+                    try:
+                        scan(con, folder)
+                    except FileNotFoundError:
+                        # An unplugged drive must not stop the other folders
+                        # from being sorted (nor flag its tracks missing).
+                        unreachable.append(str(folder))
                 rows = pending(con)
+
+            with self._status_lock:
+                self._status["unreachable"] = unreachable
 
             with self._status_lock:
                 self._status["total"] = len(rows)

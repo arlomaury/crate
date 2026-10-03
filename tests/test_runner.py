@@ -101,3 +101,17 @@ def test_a_second_run_skips_already_analysed_tracks(setup):
     r = Runner(tmp / "l.db", model); r.start([str(music)]); r.wait()
     r2 = Runner(tmp / "l.db", model); r2.start([str(music)]); r2.wait()
     assert r2.status()["total"] == 0
+
+
+def test_unplugged_folder_does_not_stop_the_run(tmp_path):
+    from crateapp.db import connect
+    from crateapp.runner import Runner
+    lib = tmp_path / "lib"; lib.mkdir()
+    db = tmp_path / "l.db"
+    connect(db).close()
+    r = Runner(db, tmp_path / "m.json")
+    r.start([str(tmp_path / "unplugged"), str(lib)])
+    r.wait()
+    st = r.status()
+    assert st["unreachable"] == [str(tmp_path / "unplugged")]
+    assert st["running"] is False

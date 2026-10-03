@@ -1153,6 +1153,7 @@ function renderPanel() {
     : state.panelTrack ? "Selected" : "Last sorted";
   $("#sp-count").textContent = running && prog.total
     ? `${prog.done} / ${prog.total}` + (prog.errors ? `  \u00b7  ${prog.errors} failed` : "")
+      + (prog.unreachable && prog.unreachable.length ? `  \u00b7  not found: ${prog.unreachable.join(", ")}` : "")
     : "";
 
   const cur = shownTrack();
