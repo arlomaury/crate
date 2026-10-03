@@ -1,6 +1,7 @@
 """Opt-in exports. Neither one modifies the source library."""
 import json
 import os
+import re
 import subprocess
 from pathlib import Path
 from xml.sax.saxutils import escape
@@ -9,15 +10,22 @@ from urllib.parse import quote
 from analyze import CUE_COLOURS, DEFAULT_CUE_COLOUR
 
 
+# Characters XML 1.0 forbids outright (control characters other than tab,
+# newline and carriage return, plus lone surrogates and U+FFFE/FFFF).
+_XML_ILLEGAL = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\ud800-\udfff\ufffe\uffff]")
+
+
 def _esc(s):
     """Escape a string for use inside a double-quoted XML attribute.
 
     xml.sax.saxutils.escape() by itself only escapes &, < and > - not the
     double quote - so a title containing a literal '"' produces malformed
     XML that Rekordbox rejects outright. The extra entities map fixes that
-    everywhere this is used.
+    everywhere this is used.  Characters XML cannot carry at all (stray
+    control bytes in ripped filenames) are dropped, since one of them makes
+    the whole file unreadable.
     """
-    return escape(s or "", {'"': "&quot;"})
+    return escape(_XML_ILLEGAL.sub("", s or ""), {'"': "&quot;", "\n": "&#10;", "\r": "&#13;", "\t": "&#9;"})
 
 
 def _members(con):

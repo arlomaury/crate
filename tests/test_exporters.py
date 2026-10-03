@@ -174,3 +174,17 @@ def test_rekordbox_export_escapes_quotes_and_ampersands(con, tmp_path):
     assert node is not None
     marks = root.findall("COLLECTION/TRACK/POSITION_MARK")
     assert any(m.get("Name") == 'Say "Hi" & Bye' for m in marks)
+
+
+def test_xml_survives_control_characters_in_names(tmp_path):
+    """A stray control byte in a ripped filename must not make the whole
+    rekordbox.xml unreadable."""
+    import xml.dom.minidom
+    c = connect(tmp_path / "x.db")
+    c.execute("INSERT INTO tracks (id, path, filename, analysed_at, bpm, camelot) "
+              "VALUES (1, '/m/bad\x01name\x0b.wav', 'bad\x01name\x0b.wav', 'now', 128.0, '8A')")
+    c.commit()
+    correct(c, 1, "House\x07", mode="move")
+    out = tmp_path / "rb.xml"
+    export_rekordbox(c, out)
+    xml.dom.minidom.parse(str(out))          # raises if the XML is invalid
