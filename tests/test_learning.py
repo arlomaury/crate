@@ -232,3 +232,37 @@ def test_duplicate_copies_do_not_reweight_training(tmp_path):
     # 5 house + 5 tech + 1 surviving representative of the 20 copies
     assert out["counts"]["tech"] == 6
     assert out["counts"]["house"] == 5
+
+
+def test_two_crate_probabilities_match_the_fitted_model(tmp_path):
+    """The binary model's probability is sigmoid(z). Expanding its one logit
+    to [-z, +z] and taking a softmax gives sigmoid(2z) instead: every track
+    looked more certain than the model said, so borderline tracks were filed
+    as confident instead of going to review. [0, z] is the exact equivalent."""
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.preprocessing import StandardScaler
+    from crateapp.classifier import _unit, train
+    from crateapp.worker import load_embedding
+    con = connect(tmp_path / "l.db")
+    rng = np.random.default_rng(0)
+    a = np.zeros(8, dtype=np.float32); a[0] = 1.0
+    b = np.zeros(8, dtype=np.float32); b[1] = 1.0
+    tid = 0
+    for vec, crate in ((a, "house"), (b, "rap")):
+        for _ in range(8):
+            tid += 1
+            seed(con, tid, vec + rng.normal(0, 0.4, 8).astype("float32"))
+            correct(con, tid, crate, mode="move")
+    p = tmp_path / "m.json"
+    train(con, p, min_per_class=5)
+
+    # Refit exactly as train() does, and ask scikit-learn directly.
+    X = _unit(np.stack([load_embedding(con, i) for i in range(1, tid + 1)]))
+    y = np.array(["house"] * 8 + ["rap"] * 8)
+    sc = StandardScaler().fit(X)
+    lr = LogisticRegression(max_iter=5000, C=0.003).fit(sc.transform(X), y)
+    probe = _unit(a * 0.6 + b * 0.4)
+    want = lr.predict_proba(sc.transform(probe[None]))[0]
+    got = {s["crate"]: s["p"] for s in Classifier(p).classify(probe)["scores"]}
+    assert abs(got["house"] - want[list(lr.classes_).index("house")]) < 1e-4
+    assert abs(got["rap"] - want[list(lr.classes_).index("rap")]) < 1e-4

@@ -304,7 +304,10 @@ are separate rows now.
 - No XSS: crate and track names live-tested with `<script>` and `onerror`
   payloads.
 - AIFF/WAV/M4A → WAV segments and full conversions decode in Chrome.
-- 287 tests pass (`python -m pytest tests/ -q`).
+- 294 tests pass (`python -m pytest tests/ -q`).
+- The review queue, crate view, lock, remove, track panel and set builder were
+  driven in headless Chromium against a seeded library (Oct 2026): every
+  action wrote the expected rows, no console errors.
 - `scan()` holds the DB lock only for its reads and writes, not while walking
   the folder or reading tags, so the UI stays responsive during a scan.
 
@@ -315,9 +318,6 @@ are separate rows now.
 - Audible playback of the crossfade preview and the track player — verified up
   to the speaker (segments decode, ramps schedule, AudioContext runs), but the
   automation browser is backgrounded and Chrome defers media there.
-- The move/add/confirm controls have not been eyeballed in a browser; Chrome
-  began refusing `127.0.0.1:8420` in the automation tab while curl got 200.
-  Endpoints and served assets were verified instead.
 - `setup.sh` has never been executed end to end (syntax-checked only).
 - Half-time/double-time BPM disambiguation.
 

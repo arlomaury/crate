@@ -394,11 +394,13 @@ def train(con, model_path, human_only=True, min_per_class=5):
         # regression and returns ONE row of coefficients, not one per class.
         # Taking a softmax over that single logit makes every track come out
         # as the first class. Expand it to the two-row form the softmax below
-        # expects: the decision function is +z for the positive class,
-        # -z for the other.
+        # expects: logits [0, z], since softmax([0, z]) = sigmoid(z), the
+        # binary model's own probability. ([-z, +z] gives sigmoid(2z): every
+        # track looked more certain than the model said, and borderline ones
+        # skipped the review queue.)
         if w.shape[0] == 1:
-            w = np.vstack([-w[0], w[0]])
-            b = np.array([-b[0], b[0]])
+            w = np.vstack([np.zeros_like(w[0]), w[0]])
+            b = np.array([0.0, b[0]])
 
         doc["linear"] = {
             "classes": [str(c) for c in lr.classes_],

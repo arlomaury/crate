@@ -14,9 +14,9 @@ tools cannot do.
   vocals    two vocal-dominant tracks fight each other over a transition.
   energy    so a set moves deliberately rather than flatlining.
 
-Tempo and key are NOT independent. Pushing tempo beyond about 6% shifts pitch
-by roughly a semitone - two positions on the Camelot wheel - so a large stretch
-silently breaks a harmonic match unless key lock is on. `harmonic_score`
+Tempo and key are NOT independent. Pushing tempo about 6% shifts pitch by a
+semitone - seven positions on the Camelot wheel, which is a circle of fifths -
+so a large stretch silently breaks a harmonic match unless key lock is on. `harmonic_score`
 therefore takes the tempo change into account rather than scoring the printed
 keys in isolation.
 """
@@ -26,7 +26,7 @@ import math
 # Practical limits, from DJ practice rather than taste.
 PITCH_LIMIT = 0.06        # +/-6% before time-stretch artefacts get audible
 COMFORTABLE_BPM = 3.0     # within this, no real work to beatmatch
-SEMITONE_PCT = 0.0595     # 6% tempo ~ one semitone ~ two Camelot positions
+SEMITONE_PCT = 0.0595     # 6% tempo ~ one semitone ~ seven Camelot positions
 
 
 def parse_camelot(code):
@@ -78,8 +78,12 @@ def harmonic_score(cam_a, cam_b, stretch=0.0):
     if not a or not b:
         return 0.0, "unknown key"
 
-    # A stretch shifts the played key by ~2 Camelot positions per semitone.
-    shift = int(round((stretch / SEMITONE_PCT) * 2))
+    # A stretch shifts the played key. The Camelot wheel is a circle of
+    # fifths, so one semitone up is SEVEN places round it (8A, A minor, up a
+    # semitone is B-flat minor, 3A) and one down is five. It is not two:
+    # two places is a whole tone along the circle, i.e. two fifths.
+    semitones = int(round(stretch / SEMITONE_PCT))
+    shift = (7 * semitones) % 12
     num_a = ((a[0] - 1 + shift) % 12) + 1
     letter_a = a[1]
     num_b, letter_b = b

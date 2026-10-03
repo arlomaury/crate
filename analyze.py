@@ -697,6 +697,34 @@ CUE_COLOURS = {
 DEFAULT_CUE_COLOUR = (48, 210, 110)
 
 
+def grid_start(moments, bpm):
+    """Where the beat grid's first downbeat sits, in seconds, for Rekordbox's
+    TEMPO Inizio - or None when there is nothing to anchor it to.
+
+    Writing Inizio="0.000" told Rekordbox that beat 1 falls exactly at the
+    start of the file, which is almost never true: the grid came out shifted
+    by up to half a beat, so quantize and beat sync snapped to the wrong
+    place. Every moment is snapped to one of the analyser's downbeats, so the
+    earliest one fixes the phase; stepping back whole bars from it gives the
+    first downbeat in the track. With no moment the TEMPO element is left
+    out and Rekordbox analyses the grid itself.
+    """
+    if not bpm or bpm <= 0 or not moments:
+        return None
+    t0 = min(float(m["time"]) for m in moments if m.get("time") is not None)
+    bar = 4 * 60.0 / float(bpm)
+    return round(t0 % bar, 3)
+
+
+def tempo_element(moments, bpm, indent="      "):
+    """The TEMPO line for a track, or "" to let Rekordbox build the grid."""
+    start = grid_start(moments, bpm)
+    if start is None:
+        return ""
+    return (f'{indent}<TEMPO Inizio="{start:.3f}" Bpm="{bpm}" '
+            f'Metro="4/4" Battito="1"/>')
+
+
 def write_rekordbox_xml(tracks, out):
     """
     rekordbox.xml with genre, tempo, key and a cue at every detected moment.
@@ -740,8 +768,9 @@ def write_rekordbox_xml(tracks, out):
             f'Genre="{esc(t.get("category", ""))}" '
             f'TotalTime="{int(t.get("duration_sec", 0))}" '
             f'Comments="{esc(t.get("category_basis", ""))}">')
-        L.append(f'      <TEMPO Inizio="0.000" Bpm="{t.get("bpm", 0)}" '
-                 f'Metro="4/4" Battito="1"/>')
+        tempo = tempo_element(t.get("moments", []), t.get("bpm"))
+        if tempo:
+            L.append(tempo)
         for n, m in enumerate(t.get("moments", [])):
             label = esc(m["label"])
             start = f'{m["time"]:.3f}'

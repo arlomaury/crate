@@ -150,7 +150,7 @@ Five signals, combined into one score with the reasons kept visible:
 | **Energy flow** | loudness, danceability and energy curve, so a set moves deliberately | ours |
 
 **Tempo and key are not independent.** Beyond about ±6% a track shifts roughly a
-semitone — two Camelot positions — so a large tempo stretch silently breaks the
+semitone — seven Camelot positions (the wheel is a circle of fifths) — so a large tempo stretch silently breaks the
 harmonic match unless key-lock is on. The score accounts for this rather than
 treating the two as separate checks.
 

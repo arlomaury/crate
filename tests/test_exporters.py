@@ -223,3 +223,67 @@ def test_missing_file_is_skipped_not_fatal(tmp_path):
     assert counts == {"House": 1}
     assert skipped == [str(tmp_path / "gone.wav")]
     assert (tmp_path / "out" / "House" / "good.wav").exists()
+
+
+def test_names_that_differ_only_in_case_are_both_exported(con, tmp_path):
+    """On a Mac's disk "Song.wav" and "song.wav" are one file. Treated as two
+    names, the second found the first already there and was never copied."""
+    other = tmp_path / "music" / "sub"; other.mkdir()
+    p = other / "Song.wav"; p.write_bytes(b"RIFF0000WAVEOTHER")
+    con.execute("INSERT INTO tracks (id, path, filename) VALUES (2, ?, 'Song.wav')", (str(p),))
+    con.commit()
+    correct(con, 2, "House", mode="move")
+    dest = tmp_path / "out"
+    export_folders(con, dest)
+    names = sorted(f.name for f in (dest / "House").iterdir())
+    assert names == ["Song_2.wav", "song_1.wav"]
+
+
+def test_unicode_spellings_of_one_name_are_both_exported(con, tmp_path):
+    """"Café" typed precomposed and as e + combining accent: one name to APFS."""
+    import unicodedata
+    other = tmp_path / "music" / "sub2"; other.mkdir()
+    nfc = unicodedata.normalize("NFC", "Café.wav"); nfd = unicodedata.normalize("NFD", "Café.wav")
+    a = tmp_path / "music" / nfc; a.write_bytes(b"A")
+    b = other / nfd; b.write_bytes(b"B")
+    con.execute("INSERT INTO tracks (id, path, filename) VALUES (3, ?, ?)", (str(a), nfc))
+    con.execute("INSERT INTO tracks (id, path, filename) VALUES (4, ?, ?)", (str(b), nfd))
+    con.commit()
+    correct(con, 3, "Pop", mode="move"); correct(con, 4, "Pop", mode="move")
+    dest = tmp_path / "out"
+    assert export_folders(con, dest)["Pop"] == 2
+    assert len(list((dest / "Pop").iterdir())) == 2
+
+
+def test_crates_that_share_a_folder_name_stay_apart(con, tmp_path):
+    """"House" and "house" (or "Drum/Bass" and "Drum-Bass") would land in one
+    folder and their tracks would mix."""
+    other = tmp_path / "music" / "b.wav"; other.write_bytes(b"B")
+    con.execute("INSERT INTO tracks (id, path, filename) VALUES (5, ?, 'b.wav')", (str(other),))
+    con.commit()
+    correct(con, 5, "house", mode="move")
+    dest = tmp_path / "out"
+    export_folders(con, dest)
+    folders = sorted(f.name for f in dest.iterdir())
+    assert len(folders) == 2 and all(f.lower().startswith("house (") for f in folders)
+
+
+def test_beat_grid_starts_on_the_analysed_downbeat(con, tmp_path):
+    """Inizio="0.000" put beat 1 at the start of the file, shifting the whole
+    grid off the music. It must line up with the downbeats the cues sit on."""
+    out = tmp_path / "rekordbox.xml"
+    export_rekordbox(con, out)
+    tempo = ET.parse(out).getroot().find("COLLECTION/TRACK/TEMPO")
+    bar = 4 * 60 / 128.0                                  # 1.875s at 128 BPM
+    assert abs(float(tempo.get("Inizio")) - (60.0 % bar)) < 1e-3
+    # Every cue lands a whole number of bars after the grid start.
+    for pm in ET.parse(out).getroot().iter("POSITION_MARK"):
+        k = (float(pm.get("Start")) - float(tempo.get("Inizio"))) / bar
+        assert abs(k - round(k)) < 1e-3
+
+
+def test_no_moments_means_rekordbox_builds_the_grid(tmp_path):
+    from analyze import grid_start, tempo_element
+    assert grid_start([], 128) is None and tempo_element([], 128) == ""
+    assert grid_start([{"time": 3.0}], None) is None
+    assert grid_start([{"time": 10.3}, {"time": 2.2}], 120) == 0.2   # 2.2 mod 2.0

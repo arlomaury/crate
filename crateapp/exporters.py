@@ -3,11 +3,12 @@ import json
 import os
 import re
 import subprocess
+import unicodedata
 from pathlib import Path
 from xml.sax.saxutils import escape
 from urllib.parse import quote
 
-from analyze import CUE_COLOURS, DEFAULT_CUE_COLOUR
+from analyze import CUE_COLOURS, DEFAULT_CUE_COLOUR, tempo_element
 
 
 # Characters XML 1.0 forbids outright (control characters other than tab,
@@ -60,6 +61,12 @@ def _safe_folder_name(name, fallback):
     return safe or fallback
 
 
+def _fs_key(name):
+    """A filename as macOS's default (APFS, case-insensitive) disk sees it:
+    case and Unicode normalisation do not distinguish two names."""
+    return unicodedata.normalize("NFC", name).casefold()
+
+
 def export_folders(con, dest, skipped=None):
     """Real folders of real files. Uses APFS copy-on-write clones where possible,
     so a 49GB library costs almost no extra disk; falls back to a plain copy.
@@ -76,8 +83,19 @@ def export_folders(con, dest, skipped=None):
     counts = {}
     if skipped is None:
         skipped = []
-    for crate, rows in _members(con).items():
+    members = _members(con)
+    # Two crates can map to one folder: "House" and "house" are the same
+    # folder on a Mac's disk, and "Drum/Bass" and "Drum-Bass" sanitise to the
+    # same name. Their files would silently merge, so a colliding crate gets
+    # its id appended instead.
+    folder_counts = {}
+    for crate in members:
+        k = _fs_key(_safe_folder_name(crate, f"crate-{crate_ids.get(crate, 'unknown')}"))
+        folder_counts[k] = folder_counts.get(k, 0) + 1
+    for crate, rows in members.items():
         safe = _safe_folder_name(crate, f"crate-{crate_ids.get(crate, 'unknown')}")
+        if folder_counts[_fs_key(safe)] > 1:
+            safe = f"{safe} ({crate_ids.get(crate, 'x')})"
         folder = dest / safe
         resolved = folder.resolve()
         # Belt and braces: even after sanitising, refuse to write anywhere
@@ -93,9 +111,13 @@ def export_folders(con, dest, skipped=None):
         # error - exactly the wrong failure mode for this project. So any
         # name that collides within this crate is disambiguated by the
         # track's own id, which is stable across runs.
+        # Compared the way the Mac's disk compares names: "Song.wav" and
+        # "song.wav", or "Café" typed two different Unicode ways, are ONE file
+        # there. Counted as different, the second copy found the first already
+        # in place, was reported exported, and was never copied.
         name_counts = {}
         for r in rows:
-            n = Path(r["path"]).name
+            n = _fs_key(Path(r["path"]).name)
             name_counts[n] = name_counts.get(n, 0) + 1
 
         n = 0
@@ -106,7 +128,7 @@ def export_folders(con, dest, skipped=None):
                 # rather than abandoning the export halfway through.
                 skipped.append(str(src))
                 continue
-            if name_counts[src.name] > 1:
+            if name_counts[_fs_key(src.name)] > 1:
                 target = folder / f"{src.stem}_{r['id']}{src.suffix}"
             else:
                 target = folder / src.name
@@ -159,8 +181,9 @@ def export_rekordbox(con, dest):
             f'AverageBpm="{r["bpm"] or 0}" Tonality="{_esc(r["camelot"] or "")}" '
             f'Genre="{_esc(genre_of.get(r["id"], ""))}" '
             f'TotalTime="{int(r["duration_sec"] or 0)}">')
-        L.append(f'      <TEMPO Inizio="0.000" Bpm="{r["bpm"] or 0}" '
-                 f'Metro="4/4" Battito="1"/>')
+        tempo = tempo_element(moments, r["bpm"])
+        if tempo:
+            L.append(tempo)
         for i, m in enumerate(moments):
             lab, start = _esc(m["label"]), f'{m["time"]:.3f}'
             L.append(f'      <POSITION_MARK Name="{lab}" Type="0" '

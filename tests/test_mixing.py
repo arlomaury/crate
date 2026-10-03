@@ -78,11 +78,22 @@ def test_distant_keys_clash():
 
 def test_a_big_tempo_stretch_breaks_a_paper_key_match():
     """Two tracks 'in key' on paper clash once one is pulled several percent -
-    6% is about a semitone, which is two positions on the wheel."""
+    6% is about a semitone."""
     on_paper = harmonic_score("8A", "8A", stretch=0.0)[0]
     stretched = harmonic_score("8A", "8A", stretch=0.06)[0]
     assert on_paper == 1.0
     assert stretched < on_paper
+
+
+def test_a_semitone_moves_seven_places_on_the_wheel():
+    """The Camelot wheel is a circle of fifths, so one semitone is seven
+    places, not two: 8A (A minor) pitched up a semitone is B-flat minor, 3A.
+    Treating it as two places scored 8A->10A as an 'energy lift' when the
+    pitched track actually clashes with it."""
+    assert harmonic_score("8A", "3A", stretch=0.06)[0] == 1.0      # up a semitone
+    assert harmonic_score("8A", "1A", stretch=-0.06)[0] == 1.0     # down a semitone
+    assert harmonic_score("8A", "10A", stretch=0.06)[0] < 0.2
+    assert harmonic_score("8B", "3B", stretch=0.06)[0] == 1.0
 
 
 # --------------------------------------------------------------- timbral

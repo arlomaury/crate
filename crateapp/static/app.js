@@ -455,7 +455,15 @@ function reviewRow(track, group) {
   sel.append(new Option("New crate…", "__new__"));
   // Default to where the track already is, never the alphabetically-first
   // crate - otherwise "Move" quietly files it somewhere the DJ never chose.
+  // A track filed nowhere has no such place, so it starts on an empty
+  // "Choose a crate" and Move does nothing until one is picked.
   if (track.crate) sel.value = track.crate;
+  else if (state.crates.length) {
+    const pick = new Option("Choose a crate…", "");
+    pick.disabled = true;
+    sel.prepend(pick);
+    sel.value = "";
+  }
   const fresh = el("input"); fresh.type = "text"; fresh.placeholder = "Crate name";
   // With no crates yet "New crate…" is the only option and already selected,
   // so no change event will ever fire - show the name box from the start.
@@ -511,7 +519,7 @@ function reviewRow(track, group) {
 
   async function send(mode, wasError) {
     const to = target();
-    if (!to) { fresh.focus(); return; }
+    if (!to) { (sel.value === "__new__" ? fresh : sel).focus(); return; }
     move.disabled = also.disabled = true;
     try {
       await api.post("/api/correct",
@@ -525,7 +533,11 @@ function reviewRow(track, group) {
   }
 
   if (ok) act.append(ok);
-  act.append(sel, fresh, ask, move, also);
+  // A track the model filed nowhere has no pick to be right or wrong about,
+  // and nothing to keep it alongside - "Also add" would ask "its pick was
+  // right?" about a pick that does not exist. Move is the only action.
+  if (track.crate) act.append(sel, fresh, ask, move, also);
+  else act.append(sel, fresh, move);
   act.append(removeControl(track, () => { row.style.opacity = "0"; }));
   // The controls live inside the row; without this, choosing a crate or
   // pressing Move would also fire the row's select/play handlers.
@@ -1267,6 +1279,13 @@ function panelActions(track) {
   // otherwise Move quietly files it somewhere never chosen.
   const filed = track.crates && track.crates.length ? track.crates[0].name : null;
   if (filed) sel.value = filed;
+  else if (state.crates.length) {
+    // Filed nowhere: start on "Choose a crate" rather than the first one.
+    const pick = new Option("Choose a crate…", "");
+    pick.disabled = true;
+    sel.prepend(pick);
+    sel.value = "";
+  }
 
   const fresh = el("input"); fresh.type = "text";
   fresh.placeholder = "Crate name";
@@ -1285,7 +1304,7 @@ function panelActions(track) {
 
   async function send(mode) {
     const to = target();
-    if (!to) { fresh.focus(); return; }
+    if (!to) { (sel.value === "__new__" ? fresh : sel).focus(); return; }
     if (mode === "move" && filed === to) {
       status(`Already in ${to}.`);
       return;
@@ -1558,7 +1577,7 @@ function drawBars(cur) {
 
 /* ------------------------------------------------------------------ polling */
 
-let timer = null, lastReview = "";
+let timer = null, lastReview = "", wasRunning = false;
 
 async function poll() {
   clearTimeout(timer);
@@ -1572,7 +1591,13 @@ async function poll() {
       sb.classList.toggle("hidden", !running);
       if (running) sb.disabled = false;
     }
-    if (running) {
+    // Also once more on the poll where a run has just finished: the last
+    // tracks are filed between the previous poll and the end, and without
+    // this the sidebar counts and the review queue stayed a few tracks
+    // behind until the DJ clicked something.
+    const justFinished = wasRunning && !running;
+    wasRunning = !!running;
+    if (running || justFinished) {
       Object.assign(state, await api.get("/api/state"));
       renderSidebar();
       // Only the review queue moves meaningfully mid-run; re-rendering a
