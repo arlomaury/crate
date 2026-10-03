@@ -67,6 +67,11 @@ class _Retrainer:
         try:
             with LOCK:
                 rebuild_centroids(self.con, self.model_path)
+                # Then file anything still filed nowhere with the new model -
+                # otherwise a new library, analysed before it had a model,
+                # would never be sorted (see runner.file_unsorted).
+                from crateapp.runner import file_unsorted
+                file_unsorted(self.con, self.model_path)
         except Exception:
             pass          # a failed retrain must never take the server down
 

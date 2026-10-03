@@ -202,6 +202,10 @@ def check_rekordbox_dest(path):
             raise ValueError(f"{path} is a folder, not a file")
         with open(path, "rb") as f:
             head = f.read(4096)
-        if b"<DJ_PLAYLISTS" not in head:
-            raise ValueError(f"{path} already exists and is not a Rekordbox export - "
+        # Only a file Crate itself wrote. A collection exported from
+        # Rekordbox has the same root tag, but it is the DJ's own library -
+        # and the ground truth retrain.py learns from - so it is never
+        # replaced.
+        if b"<DJ_PLAYLISTS" not in head or b'<PRODUCT Name="Crate"' not in head:
+            raise ValueError(f"{path} already exists and is not an export from Crate - "
                              "choose another name so it is not overwritten")

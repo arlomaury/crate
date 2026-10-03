@@ -181,63 +181,7 @@ class Runner:
         if vec is None or classifier is None or not classifier.crate_names():
             return current
 
-        # Acapellas are routed out before the genre question is asked - see
-        # classifier.acapella_verdict for why the DSP verdict beats the model
-        # here.
-        # The decision order, and it is mostly not about the audio. Measured
-        # held out on 530 labelled recordings:
-        #
-        #   audio only                              76.6%
-        #   acapella -> person -> audio             77.4%
-        #   acapella -> tag -> person -> audio      92.1%   <- this
-        #
-        # and on house vs tech house, 97.9% against the audio model's 75.4%.
-        # The DJ files that pair by the shop's tag, so the tag recovers it and
-        # no amount of listening ever could.
-        #
-        # Acapellas come first because an isolated vocal is still tagged with
-        # whatever the original was - "Hip-Hop/Rap" covers 18 of them here -
-        # and the DSP verdict is the better judge of what it actually is.
-        with LOCK:
-            who, by_person, n_person = who_made_it(con, row["id"])
-            by_tag, n_tag, purity = tag_crate(con, trow["genre_tag"])
-        vocal = json.loads(arow["vocal"]) if arow and arow["vocal"] else None
-        aca = acapella_verdict(vocal, classifier.crate_names())
-
-        chosen, reason = None, None
-        if aca:
-            chosen, reason = aca, "isolated vocal"
-        elif by_tag:
-            chosen = by_tag
-            reason = (f"tagged \u201c{trow['genre_tag']}\u201d, and you file "
-                      f"that in {by_tag} ({int(purity * 100)}% of {n_tag})")
-        elif by_person:
-            chosen = by_person
-            reason = (f"you filed {n_person} other track"
-                      f"{'' if n_person == 1 else 's'} by {who} in {by_person}")
-
-        # Where the tag and the person disagree, one of them is wrong and it
-        # is worth a look even though the chain has already picked. Measured:
-        # when they agree the answer is right 98% of the time; when they
-        # disagree, 74%. The chain is still correct to prefer the tag (right
-        # 14 of those 19 against the person's 2) - this only asks the DJ to
-        # glance at the ones where the evidence was split.
-        rules_split = bool(by_tag and by_person and by_tag != by_person)
-
-        if chosen:
-            model = classifier.classify(vec)
-            result = {"crate": chosen, "band": "confident", "p": 1.0,
-                      "similarity": model.get("similarity", 1.0),
-                      "margin": 1.0,
-                      "scores": model.get("scores", []),
-                      "reason": reason,
-                      # Worth a second look when the audio says otherwise.
-                      # None of these rules is perfect and the disagreement is
-                      # free - both numbers are computed either way.
-                      "disputed": rules_split or bool(
-                          model.get("crate") and model["crate"] != chosen)}
-        else:
-            result = classifier.classify(vec)
+        result = decide(con, classifier, row["id"], trow, arow, vec)
 
         # The panel shows the numbers the decision was actually made on, taken
         # straight from classify(). Recomputing a separate score here is how
@@ -253,3 +197,101 @@ class Runner:
             auto_assign(con, row["id"], result)
 
         return current
+
+
+def decide(con, classifier, track_id, trow, arow, vec):
+    """The filing decision for one analysed track: acapella -> genre tag ->
+    who made it -> audio model. Shared by a sorting run and by the re-filing
+    that follows a retrain (file_unsorted), so both decide the same way."""
+    # Acapellas are routed out before the genre question is asked - see
+    # classifier.acapella_verdict for why the DSP verdict beats the model
+    # here.
+    # The decision order, and it is mostly not about the audio. Measured
+    # held out on 530 labelled recordings:
+    #
+    #   audio only                              76.6%
+    #   acapella -> person -> audio             77.4%
+    #   acapella -> tag -> person -> audio      92.1%   <- this
+    #
+    # and on house vs tech house, 97.9% against the audio model's 75.4%.
+    # The DJ files that pair by the shop's tag, so the tag recovers it and
+    # no amount of listening ever could.
+    #
+    # Acapellas come first because an isolated vocal is still tagged with
+    # whatever the original was - "Hip-Hop/Rap" covers 18 of them here -
+    # and the DSP verdict is the better judge of what it actually is.
+    with LOCK:
+        who, by_person, n_person = who_made_it(con, track_id)
+        by_tag, n_tag, purity = tag_crate(con, trow["genre_tag"])
+    vocal = json.loads(arow["vocal"]) if arow and arow["vocal"] else None
+    aca = acapella_verdict(vocal, classifier.crate_names())
+
+    chosen, reason = None, None
+    if aca:
+        chosen, reason = aca, "isolated vocal"
+    elif by_tag:
+        chosen = by_tag
+        reason = (f"tagged \u201c{trow['genre_tag']}\u201d, and you file "
+                  f"that in {by_tag} ({int(purity * 100)}% of {n_tag})")
+    elif by_person:
+        chosen = by_person
+        reason = (f"you filed {n_person} other track"
+                  f"{'' if n_person == 1 else 's'} by {who} in {by_person}")
+
+    # Where the tag and the person disagree, one of them is wrong and it
+    # is worth a look even though the chain has already picked. Measured:
+    # when they agree the answer is right 98% of the time; when they
+    # disagree, 74%. The chain is still correct to prefer the tag (right
+    # 14 of those 19 against the person's 2) - this only asks the DJ to
+    # glance at the ones where the evidence was split.
+    rules_split = bool(by_tag and by_person and by_tag != by_person)
+
+    if chosen:
+        model = classifier.classify(vec)
+        result = {"crate": chosen, "band": "confident", "p": 1.0,
+                  "similarity": model.get("similarity", 1.0),
+                  "margin": 1.0,
+                  "scores": model.get("scores", []),
+                  "reason": reason,
+                  # Worth a second look when the audio says otherwise.
+                  # None of these rules is perfect and the disagreement is
+                  # free - both numbers are computed either way.
+                  "disputed": rules_split or bool(
+                      model.get("crate") and model["crate"] != chosen)}
+    else:
+        result = classifier.classify(vec)
+    return result
+
+
+def file_unsorted(con, model_path):
+    """After a retrain, give every analysed track that is still filed nowhere
+    another look with the new model.
+
+    Without this a new library never sorts: its first scan has no model, so
+    nothing is filed; the DJ teaches a few crates, the model is trained - and
+    the tracks already analysed are never revisited, because a sorting run
+    only processes new or changed files. Only unfiled tracks are touched;
+    anything already filed (by the DJ or the model) is left exactly as is.
+    Returns how many were filed."""
+    from crateapp.crates import unsorted
+    try:
+        classifier = Classifier(model_path) if Path(model_path).exists() else None
+    except Exception:
+        return 0
+    if classifier is None or not classifier.crate_names():
+        return 0
+    filed = 0
+    with LOCK:
+        for trow in unsorted(con):
+            if trow["error"]:
+                continue
+            vec = load_embedding(con, trow["id"])
+            if vec is None:
+                continue
+            arow = con.execute("SELECT energy, vocal FROM analysis WHERE track_id=?",
+                               (trow["id"],)).fetchone()
+            result = decide(con, classifier, trow["id"], trow, arow, vec)
+            if result.get("crate"):
+                auto_assign(con, trow["id"], result)
+                filed += 1
+    return filed

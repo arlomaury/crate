@@ -63,16 +63,16 @@ def auto_assign(con, track_id, result):
     cleared first, so a track re-filed into a different crate ends up with
     exactly one auto row, not two.
     """
+    if con.execute("SELECT 1 FROM assignments WHERE track_id=? AND source='human'",
+                   (track_id,)).fetchone():
+        # The DJ has acted on this track. Re-analysis (its tags were edited,
+        # say) must never replace, add to or remove any of its filing - not
+        # their own rows, which are the training data, and not an automatic
+        # placement they reviewed and kept with an also-add.
+        return
     con.execute("DELETE FROM assignments WHERE track_id=? AND source='auto'",
                (track_id,))
     crate = result.get("crate")
-    if con.execute("SELECT 1 FROM assignments WHERE track_id=? AND source='human'",
-                   (track_id,)).fetchone():
-        # The DJ already filed this track. Re-analysis (its tags were edited,
-        # say) must never replace or add to their decision - those rows are
-        # the training data, and retrain.py protects them the same way.
-        con.commit()
-        return
     if crate is None or is_locked(con, crate):
         # A locked crate is the DJ's alone. Refused here as well as upstream,
         # so no future caller can route around it.
@@ -181,8 +181,11 @@ def correct(con, track_id, to_crate=None, mode="move", was_error=None):
     # Correct - and recording it as the model being wrong both understates
     # the measured accuracy and teaches the learning loop the opposite of
     # what they meant. 35 of the first 152 corrections were this.
+    # Only the primary placement counts as "already there": a move onto a
+    # crate the track was merely also-added to still corrects the model.
     already = con.execute(
-        "SELECT 1 FROM assignments WHERE track_id=? AND crate_id=?",
+        "SELECT 1 FROM assignments WHERE track_id=? AND crate_id=? AND "
+        "(source='auto' OR (source='human' AND band='confident'))",
         (track_id, to_id)).fetchone() is not None
 
     from_id = None
