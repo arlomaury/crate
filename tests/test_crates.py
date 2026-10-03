@@ -715,3 +715,13 @@ def test_the_artist_tag_still_wins_over_the_filename(tmp_path):
                 "VALUES (9,'/9.wav','Y-Someone Else.wav','realartist')")
     con.commit()
     assert who_made_it(con, 9)[0] == "realartist"
+
+
+def test_correcting_a_removed_track_changes_nothing(tmp_path):
+    import pytest
+    from crateapp.db import connect
+    from crateapp.crates import correct
+    con = connect(tmp_path / "l.db")
+    with pytest.raises(ValueError, match="no such track"):
+        correct(con, 424242, "Ghost Crate", mode="move")
+    assert con.execute("SELECT count(*) FROM crates WHERE name='Ghost Crate'").fetchone()[0] == 0

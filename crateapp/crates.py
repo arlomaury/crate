@@ -131,6 +131,10 @@ def correct(con, track_id, to_crate=None, mode="move", was_error=None):
     """
     if mode not in ("move", "add", "confirm"):
         raise ValueError("mode must be 'move', 'add' or 'confirm'")
+    # Checked before anything is written: a stale screen (the track removed in
+    # another tab) must not leave behind an empty crate created for it.
+    if con.execute("SELECT 1 FROM tracks WHERE id=?", (track_id,)).fetchone() is None:
+        raise ValueError("no such track - it may have been removed; refresh the page")
 
     if mode == "confirm":
         row = con.execute(
