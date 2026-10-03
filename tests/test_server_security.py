@@ -66,3 +66,14 @@ def test_security_headers_present(base):
     _, headers = status(base + "/api/state")
     assert headers["X-Content-Type-Options"] == "nosniff"
     assert headers["X-Frame-Options"] == "DENY"
+
+
+def test_oversized_body_refused(base):
+    code, _ = status(base + "/api/lock", data=b"{}",
+                     headers={"Content-Type": "application/json", "Content-Length": "50000000"})
+    assert code == 413
+
+
+def test_non_finite_preview_position_refused(base):
+    assert status(base + "/api/preview/1?at=inf")[0] == 400
+    assert status(base + "/api/preview/1?at=nan")[0] == 400

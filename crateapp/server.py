@@ -6,6 +6,7 @@ from the network. Stdlib only (http.server / json / sqlite3) - no Flask,
 no FastAPI.
 """
 import json
+import math
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -145,8 +146,15 @@ def make_app(con, model_path, runner=None):
         def _rows(self, rows):
             return [dict(r) for r in rows]
 
+        MAX_BODY = 1_000_000          # every request body is a small JSON object
+
         def _read_json(self):
-            n = int(self.headers.get("Content-Length") or 0)
+            try:
+                n = int(self.headers.get("Content-Length") or 0)
+            except ValueError:
+                raise ApiError("bad Content-Length")
+            if n < 0 or n > self.MAX_BODY:
+                raise ApiError("request body too large", code=413)
             raw = self.rfile.read(n) if n else b""
             if not raw:
                 return {}
@@ -559,9 +567,12 @@ def make_app(con, model_path, runner=None):
             q = parse_qs(urlsplit(self.path).query)
             def num(key, default):
                 try:
-                    return float(q.get(key, [default])[0])
+                    v = float(q.get(key, [default])[0])
                 except (TypeError, ValueError):
                     raise ApiError(f"{key} must be a number")
+                if not math.isfinite(v):
+                    raise ApiError(f"{key} must be a finite number")
+                return v
             at = max(0.0, num("at", 0.0))
             length = min(self.MAX_PREVIEW_SEC, max(0.5, num("len", 20.0)))
 
