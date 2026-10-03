@@ -325,8 +325,10 @@ def make_app(con, model_path, runner=None):
                 if self.path == "/api/scan":
                     folder = str(Path(self._field(payload, "folder", "str", required=True)).expanduser())
                     try:
-                        with LOCK:
-                            return self._send(scan(con, folder))
+                        # The lock is taken inside scan, only around the
+                        # database work, so the UI keeps answering while a
+                        # big folder is walked.
+                        return self._send(scan(con, folder, lock=LOCK))
                     except FileNotFoundError as e:
                         raise ApiError(str(e), code=404)
 

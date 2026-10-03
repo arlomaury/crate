@@ -304,7 +304,9 @@ are separate rows now.
 - No XSS: crate and track names live-tested with `<script>` and `onerror`
   payloads.
 - AIFF/WAV/M4A → WAV segments and full conversions decode in Chrome.
-- 197 tests pass (`python -m pytest tests/ -q`).
+- 287 tests pass (`python -m pytest tests/ -q`).
+- `scan()` holds the DB lock only for its reads and writes, not while walking
+  the folder or reading tags, so the UI stays responsive during a scan.
 
 ### NOT verified
 
@@ -345,7 +347,6 @@ are separate rows now.
    would mean re-embedding the library and a ~2GB dependency, and it is
    unproven on *this* distinction — expect it to help the taxonomy generally
    rather than rescue house-vs-tech.
-7. `scan()` still holds the DB lock for a whole folder scan.
 
 ## 7. Possible improvements (not requested — do not build unasked)
 

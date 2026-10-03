@@ -130,3 +130,49 @@ def test_missing_folder_is_an_error_not_a_mass_missing_flag(tmp_path):
     with pytest.raises(FileNotFoundError):
         scan(con, tmp_path / "drive")
     assert con.execute("SELECT missing FROM tracks").fetchone()[0] == 0
+
+
+def test_scan_does_not_hold_the_lock_while_reading_tags(tmp_path, monkeypatch):
+    # Reading tags is the slow part on a big drive. Another thread (the UI)
+    # must be able to take the lock while it happens.
+    import threading
+    from crateapp import scanner
+    music = tmp_path / "music"; music.mkdir()
+    make_audio(music, "a.wav"); make_audio(music, "b.wav")
+    con = connect(tmp_path / "l.db")
+    lock = threading.RLock()
+    free_during_tags = []
+
+    def fake_tags(path):
+        got = []
+        t = threading.Thread(target=lambda: got.append(lock.acquire(timeout=1) and (lock.release() or True)))
+        t.start(); t.join()
+        free_during_tags.append(bool(got and got[0]))
+        return "artist", "house"
+
+    monkeypatch.setattr(scanner, "read_tags", fake_tags)
+    stats = scan(con, music, lock=lock)
+    assert stats["added"] == 2
+    assert free_during_tags == [True, True]
+    assert {r["genre_tag"] for r in con.execute("SELECT genre_tag FROM tracks")} == {"house"}
+
+
+def test_a_file_registered_mid_scan_is_not_added_twice(tmp_path, monkeypatch):
+    # The library can change between walking the folder and writing to it.
+    from crateapp import scanner
+    music = tmp_path / "music"; music.mkdir()
+    f = make_audio(music, "a.wav")
+    con = connect(tmp_path / "l.db")
+    real = scanner.read_tags
+
+    def racing_tags(path):
+        st = f.stat()
+        con.execute("INSERT INTO tracks (path, filename, size, mtime) VALUES (?,?,?,?)",
+                    (str(f.resolve()), f.name, st.st_size, st.st_mtime))
+        con.commit()
+        return real(path)
+
+    monkeypatch.setattr(scanner, "read_tags", racing_tags)
+    stats = scan(con, music)
+    assert stats == {"added": 0, "unchanged": 1, "changed": 0, "missing": 0}
+    assert con.execute("SELECT count(*) c FROM tracks").fetchone()["c"] == 1

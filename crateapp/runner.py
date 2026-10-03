@@ -94,14 +94,16 @@ class Runner:
         con = connect(self.db_path)
         try:
             unreachable = []
+            for folder in folders:
+                try:
+                    # Holds LOCK only for its database reads and writes, so
+                    # the UI stays usable while a large drive is walked.
+                    scan(con, folder, lock=LOCK)
+                except FileNotFoundError:
+                    # An unplugged drive must not stop the other folders
+                    # from being sorted (nor flag its tracks missing).
+                    unreachable.append(str(folder))
             with LOCK:
-                for folder in folders:
-                    try:
-                        scan(con, folder)
-                    except FileNotFoundError:
-                        # An unplugged drive must not stop the other folders
-                        # from being sorted (nor flag its tracks missing).
-                        unreachable.append(str(folder))
                 rows = pending(con)
 
             with self._status_lock:
