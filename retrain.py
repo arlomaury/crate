@@ -23,8 +23,8 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-from crateapp.classifier import Classifier, acapella_verdict, train
-from crateapp.crates import auto_assign, tag_crate, who_made_it
+from crateapp.classifier import Classifier, train
+from crateapp.crates import auto_assign
 from crateapp.db import LOCK, connect
 from crateapp.worker import load_embedding
 from eval_genre import GENRE_PLAYLISTS, xml_labels
@@ -73,9 +73,18 @@ def reseed(con, xml_path, dry_run=False):
             "SELECT count(*) FROM assignments WHERE source='auto'").fetchone()[0]
         human = con.execute(
             "SELECT count(*) FROM assignments WHERE source='human'").fetchone()[0]
+        locked = con.execute(
+            "SELECT count(*) FROM assignments a JOIN crates c ON c.id=a.crate_id "
+            "WHERE c.locked=1").fetchone()[0]
         print(f"\nClearing {auto} automatic and {human} existing human "
-              f"assignments, then re-seeding from Rekordbox.")
-        con.execute("DELETE FROM assignments")
+              f"assignments, then re-seeding from Rekordbox."
+              + (f" Keeping the {locked} tracks in hand-picked (locked) crates."
+                 if locked else ""))
+        # Locked crates are hand-picked lists ("the song"), not genres, so
+        # they are not in the Rekordbox genre playlists and a re-seed cannot
+        # recreate them. Wiping them emptied the DJ's own curated crates.
+        con.execute("DELETE FROM assignments WHERE crate_id NOT IN "
+                    "(SELECT id FROM crates WHERE locked=1)")
         for crate in sorted(set(counts)):
             con.execute("INSERT OR IGNORE INTO crates (name) VALUES (?)", (crate,))
         cid = {r["name"]: r["id"]
@@ -90,25 +99,22 @@ def reseed(con, xml_path, dry_run=False):
 
 
 def reclassify(con, model_path):
-    """Re-file every analysed track with the retrained model."""
+    """Re-file every analysed track with the retrained model.
+
+    Uses runner.decide, the same decision a sorting run makes (acapella ->
+    tag -> person -> audio). This used to be a hand-written copy of that
+    chain, which had drifted: an acapella filed here was never flagged when
+    the audio disagreed, though a sorting run flagged it."""
+    from crateapp.runner import decide
     clf = Classifier(model_path)
     if not clf.crate_names():
         print("No crates to classify against.", file=sys.stderr)
         return {}
 
-    import json as _json
     with LOCK:
         ids = [r["id"] for r in con.execute(
             "SELECT t.id FROM tracks t JOIN embeddings e ON e.track_id=t.id "
             "WHERE t.analysed_at IS NOT NULL AND t.missing=0").fetchall()]
-        vocals = {r["track_id"]: _json.loads(r["vocal"])
-                  for r in con.execute(
-                      "SELECT track_id, vocal FROM analysis "
-                      "WHERE vocal IS NOT NULL").fetchall()}
-        tags = {r["id"]: r["genre_tag"] for r in con.execute(
-            "SELECT id, genre_tag FROM tracks "
-            "WHERE genre_tag IS NOT NULL").fetchall()}
-
         # Human labels are the ground truth and must survive re-filing.
         human = {r["track_id"] for r in con.execute(
             "SELECT track_id FROM assignments WHERE source='human'").fetchall()}
@@ -118,42 +124,18 @@ def reclassify(con, model_path):
         if tid in human:
             bands["kept (yours)"] += 1
             continue
-        vec = load_embedding(con, tid)
-        if vec is None:
-            continue
-        # Same order as runner._classify: acapella, tag, person, audio.
-        aca = acapella_verdict(vocals.get(tid), clf.crate_names())
-        chosen, why, rules_split = None, None, False
-        if not aca:
-            by_tag, _n, _p = tag_crate(con, tags.get(tid))
-            _who, by_person, _n2 = who_made_it(con, tid)
-            # Tag and person disagreeing is worth a look even once the chain
-            # has picked - right 74% of the time against 98% when they agree.
-            rules_split = bool(by_tag and by_person and by_tag != by_person)
-            if by_tag:
-                chosen, why = by_tag, "by genre tag"
-            elif by_person:
-                chosen, why = by_person, "by artist (yours)"
-        if chosen:
-            model = clf.classify(vec)
-            auto_assign(con, tid, {
-                "crate": chosen, "band": "confident", "p": 1.0,
-                "similarity": model.get("similarity", 1.0), "margin": 1.0,
-                "scores": model.get("scores", []),
-                "disputed": rules_split or bool(
-                    model.get("crate") and model["crate"] != chosen)})
-            bands[why] += 1
-            continue
-        if aca:
-            result = {"crate": aca, "band": "confident", "similarity": 1.0,
-                      "margin": 1.0, "p": 1.0,
-                      "scores": [{"crate": aca, "p": 1.0}]}
-            bands["acapella -> vocals"] += 1
-            with LOCK:
-                auto_assign(con, tid, result)
-            continue
-        result = clf.classify(vec)
-        bands[result["band"]] += 1
+        with LOCK:
+            vec = load_embedding(con, tid)
+            if vec is None:
+                continue
+            trow = con.execute("SELECT * FROM tracks WHERE id=?", (tid,)).fetchone()
+            arow = con.execute("SELECT energy, vocal FROM analysis WHERE track_id=?",
+                               (tid,)).fetchone()
+        result = decide(con, clf, tid, trow, arow, vec)
+        why = result.get("reason") or ""
+        bands["acapella -> vocals" if why == "isolated vocal"
+              else "by genre tag" if why.startswith("tagged")
+              else "by artist (yours)" if why else result["band"]] += 1
         with LOCK:
             auto_assign(con, tid, result)
     return bands
