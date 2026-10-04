@@ -360,10 +360,16 @@ def tag_gaps(con, limit=8):
     for r in rows:
         if tag_crate(con, r["tag"])[0]:
             continue                      # already teaching us something
+        # Counted exactly as tag_crate counts its evidence (no acapellas, no
+        # locked crates), so "one more decides it" is true when the UI says it.
         filed = con.execute(
-            "SELECT count(*) n FROM assignments a JOIN tracks t "
-            "ON t.id = a.track_id WHERE a.source='human' "
-            "AND lower(t.genre_tag) = ?", (r["tag"].lower(),)).fetchone()["n"]
+            "SELECT count(*) n FROM assignments a "
+            "JOIN tracks t ON t.id = a.track_id "
+            "JOIN crates c ON c.id = a.crate_id "
+            "LEFT JOIN analysis an ON an.track_id = t.id "
+            "WHERE a.source='human' AND lower(t.genre_tag) = ? "
+            "  AND coalesce(json_extract(an.vocal, '$.is_acapella'), 0) = 0 "
+            "  AND coalesce(c.locked, 0) = 0", (r["tag"].lower(),)).fetchone()["n"]
         pick = con.execute(
             "SELECT t.id, t.filename FROM tracks t "
             "JOIN assignments a ON a.track_id = t.id AND a.source = 'auto' "

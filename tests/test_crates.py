@@ -761,3 +761,22 @@ def test_also_add_on_a_disputed_track_resolves_it_and_a_later_move_works(con):
     assert disputed(con) == []
     correct(con, 1, "Dubstep", mode="move")
     assert _filing(con) == [("Dubstep", "human", "confident")]
+
+
+def test_tag_gap_progress_counts_only_what_teaches_the_tag(tmp_path):
+    """An acapella filed by hand does not teach a tag (tag_crate ignores it),
+    so it must not count toward "you have filed 1 - one more decides it"."""
+    import json
+    from crateapp.crates import tag_gaps
+    con = connect(tmp_path / "l.db")
+    for i, aca in ((1, True), (2, False), (3, False)):
+        con.execute("INSERT INTO tracks (id, path, filename, genre_tag) VALUES (?,?,?,'garage')",
+                    (i, f"/{i}.wav", f"{i}.wav"))
+        con.execute("INSERT INTO analysis (track_id, vocal) VALUES (?,?)",
+                    (i, json.dumps({"is_acapella": aca})))
+    con.commit()
+    correct(con, 1, "vocals", mode="move")
+    for i in (2, 3):
+        auto_assign(con, i, {"crate": "UKG", "band": "confident", "similarity": .8})
+    gap = tag_gaps(con)[0]
+    assert gap["tag"] == "garage" and gap["filed_so_far"] == 0
