@@ -579,6 +579,8 @@ def test_folders_added_before_a_reload_stay_in_every_run(tmp_path):
         assert seen["folders"] == [str(a), str(b)]
         post(base + "/api/start", {})                     # a later run with no page state
         assert seen["folders"] == [str(a), str(b)]
+        post(base + "/api/start", {"folders": [str(tmp_path / "typo")]})
+        assert seen["folders"] == [str(a), str(b)], "a path that is not a folder is not saved"
     finally:
         srv.shutdown()
 

@@ -772,7 +772,12 @@ def make_app(con, model_path, runner=None):
             # opened, so replacing the list dropped every earlier folder from
             # all future runs.
             for f in self._field(payload, "folders", "strlist") or []:
-                add_folder(con, f)
+                # Only real folders are remembered: there is no way to forget
+                # one from the app, so a mistyped path must not be saved for
+                # good. (A saved folder on an unplugged drive is kept - that
+                # is a drive coming back, not a typo.)
+                if Path(f).expanduser().is_dir():
+                    add_folder(con, f)
             folders = get_folders(con)
             if not folders:
                 raise ApiError("no folders configured to scan")
