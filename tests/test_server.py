@@ -555,3 +555,52 @@ def test_remove_over_http(tmp_path):
         assert e.value.code == 404
     finally:
         srv.shutdown()
+
+
+def test_folders_added_before_a_reload_stay_in_every_run(tmp_path):
+    """The page only knows folders added since it opened. Starting a run used
+    to REPLACE the saved list with that, so a folder added before a reload
+    silently dropped out of all future runs."""
+    con = connect(tmp_path / "l.db")
+    seen = {}
+
+    class FakeRunner:
+        def start(self, folders):
+            seen["folders"] = list(folders); return True
+        def status(self): return {"running": False}
+
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), make_app(con, tmp_path / "m.json", runner=FakeRunner()))
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{srv.server_port}"
+    a = tmp_path / "A"; a.mkdir(); b = tmp_path / "B"; b.mkdir()
+    try:
+        post(base + "/api/scan", {"folder": str(a)})      # added, then the page reloads
+        post(base + "/api/start", {"folders": [str(b)]})  # the new page only knows B
+        assert seen["folders"] == [str(a), str(b)]
+        post(base + "/api/start", {})                     # a later run with no page state
+        assert seen["folders"] == [str(a), str(b)]
+    finally:
+        srv.shutdown()
+
+
+def test_folder_export_does_not_hold_the_database_lock_while_copying(tmp_path, monkeypatch):
+    from crateapp import exporters
+    from crateapp.db import LOCK
+    music = tmp_path / "music"; music.mkdir()
+    f = music / "a.wav"; f.write_bytes(b"x")
+    con = connect(tmp_path / "l.db")
+    con.execute("INSERT INTO tracks (id, path, filename) VALUES (1, ?, 'a.wav')", (str(f),))
+    con.commit()
+    correct(con, 1, "House", mode="move")
+    free = []
+
+    def fake_copy(src, tmp):
+        got = []
+        t = threading.Thread(target=lambda: got.append(LOCK.acquire(timeout=1) and (LOCK.release() or True)))
+        t.start(); t.join()
+        free.append(bool(got and got[0]))
+        import shutil; shutil.copyfile(src, tmp)
+
+    monkeypatch.setattr(exporters, "_copy", fake_copy)
+    assert exporters.export_folders(con, tmp_path / "out", lock=LOCK) == {"House": 1}
+    assert free == [True]

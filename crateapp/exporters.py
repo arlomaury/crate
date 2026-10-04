@@ -4,6 +4,8 @@ import os
 import re
 import subprocess
 import unicodedata
+import threading
+from contextlib import nullcontext
 from pathlib import Path
 from xml.sax.saxutils import escape
 from urllib.parse import quote
@@ -67,7 +69,18 @@ def _fs_key(name):
     return unicodedata.normalize("NFC", name).casefold()
 
 
-def export_folders(con, dest, skipped=None):
+# One folder export at a time. They no longer hold the database lock while
+# copying, so two clicks on Export would otherwise copy the same files into
+# the same place at once.
+_EXPORT_GUARD = threading.Lock()
+
+
+def export_folders(con, dest, skipped=None, lock=None):
+    with _EXPORT_GUARD:
+        return _export_folders(con, dest, skipped, lock)
+
+
+def _export_folders(con, dest, skipped, lock):
     """Real folders of real files. Uses APFS copy-on-write clones where possible,
     so a 49GB library costs almost no extra disk; falls back to a plain copy.
 
@@ -78,12 +91,16 @@ def export_folders(con, dest, skipped=None):
     later, resumed run.
     """
     dest = Path(dest).expanduser().resolve()
-    crate_ids = {r["name"]: r["id"]
-                 for r in con.execute("SELECT id, name FROM crates").fetchall()}
+    # Only the reads need the database lock. Copying a whole library takes
+    # minutes, and holding the lock for it froze every other request - the
+    # app could not even show a crate until the export was done.
+    with (lock if lock is not None else nullcontext()):
+        crate_ids = {r["name"]: r["id"]
+                     for r in con.execute("SELECT id, name FROM crates").fetchall()}
+        members = _members(con)
     counts = {}
     if skipped is None:
         skipped = []
-    members = _members(con)
     # Two crates can map to one folder: "House" and "house" are the same
     # folder on a Mac's disk, and "Drum/Bass" and "Drum-Bass" sanitise to the
     # same name. Their files would silently merge, so a colliding crate gets

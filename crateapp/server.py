@@ -13,6 +13,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlsplit
 
 from crateapp import crates as crate_ops
+from crateapp.bootstrap import add_folder, get_folders
 from crateapp.classifier import rebuild_centroids
 from crateapp.db import LOCK
 from crateapp.exporters import check_rekordbox_dest, export_folders, export_rekordbox
@@ -328,9 +329,13 @@ def make_app(con, model_path, runner=None):
                         # The lock is taken inside scan, only around the
                         # database work, so the UI keeps answering while a
                         # big folder is walked.
-                        return self._send(scan(con, folder, lock=LOCK))
+                        out = scan(con, folder, lock=LOCK)
                     except FileNotFoundError as e:
                         raise ApiError(str(e), code=404)
+                    # Remembered here, not only in the open page: a folder
+                    # added before a reload must still be in the next run.
+                    add_folder(con, folder)
+                    return self._send(out)
 
                 if self.path == "/api/export":
                     return self._send(self._export(payload))
@@ -736,12 +741,14 @@ def make_app(con, model_path, runner=None):
                 raise ApiError("give a full path, e.g. ~/Desktop/Crates or ~/Desktop/rekordbox.xml")
             dest = str(Path(dest).expanduser().resolve())
             try:
+                if kind == "folders":
+                    skipped = []
+                    # Takes the lock itself, only for its reads, so the app
+                    # keeps answering while the files are copied.
+                    counts = export_folders(con, dest, skipped, lock=LOCK)
+                    return {"exported": counts, "dest": dest, "skipped": len(skipped),
+                            "skippedExamples": skipped[:5]}
                 with LOCK:
-                    if kind == "folders":
-                        skipped = []
-                        counts = export_folders(con, dest, skipped)
-                        return {"exported": counts, "dest": dest, "skipped": len(skipped),
-                                "skippedExamples": skipped[:5]}
                     if kind == "rekordbox":
                         # export_rekordbox does not create its parent directory
                         # (unlike export_folders, which does) - do it here or a
@@ -760,19 +767,13 @@ def make_app(con, model_path, runner=None):
         def _start(self, payload):
             if runner is None:
                 raise ApiError("no runner configured", code=503)
-            folders = self._field(payload, "folders", "strlist")
-            if folders:
-                folders = [str(Path(f).expanduser()) for f in folders]
-            with LOCK:
-                if folders:
-                    con.execute(
-                        "INSERT OR REPLACE INTO config (key, value) VALUES "
-                        "('folders', ?)", (json.dumps(folders),))
-                    con.commit()
-                else:
-                    row = con.execute(
-                        "SELECT value FROM config WHERE key='folders'").fetchone()
-                    folders = json.loads(row["value"]) if row else []
+            # Folders the page sends are ADDED to the saved list, never put in
+            # its place. The page only knows the folders added since it was
+            # opened, so replacing the list dropped every earlier folder from
+            # all future runs.
+            for f in self._field(payload, "folders", "strlist") or []:
+                add_folder(con, f)
+            folders = get_folders(con)
             if not folders:
                 raise ApiError("no folders configured to scan")
             return {"started": runner.start(folders)}
