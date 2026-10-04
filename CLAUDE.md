@@ -304,7 +304,7 @@ are separate rows now.
 - No XSS: crate and track names live-tested with `<script>` and `onerror`
   payloads.
 - AIFF/WAV/M4A → WAV segments and full conversions decode in Chrome.
-- 300 tests pass (`python -m pytest tests/ -q`).
+- 298 tests pass (`python -m pytest tests/ -q`).
 - The review queue, crate view, lock, remove, track panel and set builder were
   driven in headless Chromium against a seeded library (Oct 2026): every
   action wrote the expected rows, no console errors.
