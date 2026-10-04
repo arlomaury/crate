@@ -412,9 +412,11 @@ function tagGapGroup(gaps) {
   const h = el("h3", null, "Teach a tag");
   const total = gaps.reduce((a, x) => a + x.would_unlock, 0);
   h.append(el("span", "pill tagged", String(gaps.length)));
+  // Two filings that agree are what teach a tag (crates.TAG_MIN_SEEN), so
+  // the copy must not promise that one is enough.
   g.append(h, el("p", "note",
-    `File one track from each of these and every other track carrying the `
-    + `same tag files itself. These ${gaps.length} cover ${total} tracks.`));
+    `File two tracks from each of these into the same crate and every other `
+    + `track carrying that tag files itself. These ${gaps.length} cover ${total} tracks.`));
 
   for (const x of gaps) {
     const row = el("div", "gap-row");
@@ -423,9 +425,12 @@ function tagGapGroup(gaps) {
     t.append(el("span", "gap-quote", `\u201c${x.tag}\u201d`),
              el("span", "gap-count", `settles ${x.would_unlock} track${x.would_unlock === 1 ? "" : "s"}`));
     left.append(t, el("div", "gap-file", x.filename));
-    if (x.filed_so_far) {
+    if (x.filed_so_far === 1) {
+      left.append(el("div", "gap-progress", "you have filed 1 \u2014 one more decides it"));
+    } else if (x.filed_so_far > 1) {
+      // Filed more than once and still not decided: they point different ways.
       left.append(el("div", "gap-progress",
-        `you have filed ${x.filed_so_far} \u2014 one more decides it`));
+        `you have filed ${x.filed_so_far}, but not consistently into one crate yet`));
     }
     row.append(left);
 
@@ -879,6 +884,9 @@ const preview = {
       return;
     }
     button.disabled = false;
+    // One thing making sound at a time: hearing a transition over a track
+    // that is already playing is noise, not a preview.
+    if (player.audio && !player.audio.paused) player.audio.pause();
 
     const ctx = this.context();
     if (ctx.state === "suspended") await ctx.resume();
@@ -1106,15 +1114,22 @@ function shownTrack() {
 
 /* Clicking a track selects it. If nothing is being analysed it takes over the
  * panel; during a run the live track keeps the stage and this one waits. */
+let selectToken = 0;
 async function selectTrack(trackId) {
   if (trackId == null) return;
+  const mine = ++selectToken;
   if (state.panelTrack && state.panelTrack.id === trackId) {
     renderPanel();
     return;
   }
+  let t;
   try {
-    state.panelTrack = await api.get("/api/track/" + trackId);
-  } catch (e) { fail(e.message); return; }
+    t = await api.get("/api/track/" + trackId);
+  } catch (e) { if (mine === selectToken) fail(e.message); return; }
+  // Two quick clicks: the answers can land in either order, and the panel
+  // must end up on the track clicked last.
+  if (mine !== selectToken) return;
+  state.panelTrack = t;
   state.showAllBars = false;
   renderPanel();
 }
@@ -1250,6 +1265,7 @@ function removeControl(track, after) {
       if (state.panelTrack && state.panelTrack.id === track.id) {
         state.panelTrack = null;
         state.shownKey = null;
+        renderPanel();          // not left showing a track that is gone
       }
       if (after) after();
       await refresh();

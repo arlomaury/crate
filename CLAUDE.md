@@ -326,8 +326,8 @@ are separate rows now.
 ## 6. Outstanding, in priority order
 
 1. **Teach the tags** — the review queue now leads with "Teach a tag"
-   (`crates.tag_gaps`). Filing ONE track from each of 8 tags settles ~84
-   others, because the tag rule then applies to all of them. Highest return
+   (`crates.tag_gaps`). Filing TWO tracks (into the same crate) from each of
+   8 tags settles ~84 others, because the tag rule then applies to all of them. Highest return
    on the DJ's attention by a wide margin.
 2. **Work "Worth a second look"** (~129 tracks). These are filed
    confidently but the two independent signals disagree, and measured, 25% of
