@@ -1191,10 +1191,15 @@ function renderPanel() {
 
   $("#sp-label").textContent = running ? "Sorting"
     : state.panelTrack ? "Selected" : "Last sorted";
+  // Without the genre models nothing can be sorted: say so, running or not.
+  const noModel = prog && prog.noModel
+    ? "Genre models not installed: tracks get tempo, key and cues but cannot be sorted. Run ./setup.sh, then Start sorting again." : "";
   $("#sp-count").textContent = running && prog.total
     ? `${prog.done} / ${prog.total}` + (prog.errors ? `  \u00b7  ${prog.errors} failed` : "")
       + (prog.unreachable && prog.unreachable.length ? `  \u00b7  not found: ${prog.unreachable.join(", ")}` : "")
-    : "";
+      + (noModel ? `  \u00b7  ${noModel}` : "")
+    : noModel;
+  $("#sp-count").classList.toggle("sp-warn", !!noModel);
 
   const cur = shownTrack();
   if (!cur) {

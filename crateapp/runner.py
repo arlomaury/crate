@@ -103,17 +103,19 @@ class Runner:
                     # An unplugged drive must not stop the other folders
                     # from being sorted (nor flag its tracks missing).
                     unreachable.append(str(folder))
+            gm = load_genre_model(self.models_dir)
+            classifier = self._load_classifier()
+            # Without the genre models a track still gets tempo, key and cues
+            # but no embedding, so it can never be sorted. Say so, and once
+            # the models are there, pick those tracks up again.
+            has_model = getattr(gm, "ok", False)
             with LOCK:
-                rows = pending(con)
+                rows = pending(con, include_unembedded=has_model)
 
             with self._status_lock:
                 self._status["unreachable"] = unreachable
-
-            with self._status_lock:
+                self._status["noModel"] = not getattr(gm, "ok", True)
                 self._status["total"] = len(rows)
-
-            gm = load_genre_model(self.models_dir)
-            classifier = self._load_classifier()
 
             for row in rows:
                 if self._stop_flag.is_set():

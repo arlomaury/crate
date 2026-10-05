@@ -112,8 +112,14 @@ def scan(con, folder, lock=None):
     return stats
 
 
-def pending(con):
-    """Tracks still needing analysis, oldest first."""
-    return con.execute(
-        "SELECT * FROM tracks WHERE analysed_at IS NULL AND missing=0 ORDER BY id"
-    ).fetchall()
+def pending(con, include_unembedded=False):
+    """Tracks still needing analysis, oldest first.
+
+    With `include_unembedded`, also tracks that were analysed cleanly but
+    have no embedding - analysed before the genre models were installed.
+    Without this they kept their tempo and key but could never be sorted,
+    since a track is analysed once."""
+    sql = "SELECT * FROM tracks WHERE missing=0 AND (analysed_at IS NULL"
+    if include_unembedded:
+        sql += (" OR (error IS NULL AND id NOT IN (SELECT track_id FROM embeddings))")
+    return con.execute(sql + ") ORDER BY id").fetchall()

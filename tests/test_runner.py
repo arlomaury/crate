@@ -115,3 +115,29 @@ def test_unplugged_folder_does_not_stop_the_run(tmp_path):
     st = r.status()
     assert st["unreachable"] == [str(tmp_path / "unplugged")]
     assert st["running"] is False
+
+
+def test_tracks_analysed_before_the_models_existed_are_sorted_once_they_do(setup, monkeypatch):
+    """Without the genre models a run gives tempo and key but no embedding.
+    Those tracks used to stay unsorted for good (analysis runs once); the
+    run now says the models are missing, and picks the tracks up again once
+    they are installed."""
+    import types
+    import crateapp.runner as runner_mod
+    tmp, music, model = setup
+    real = runner_mod.analyse_track
+    monkeypatch.setattr(runner_mod, "load_genre_model", lambda d: types.SimpleNamespace(ok=False))
+    monkeypatch.setattr(runner_mod, "analyse_track", lambda gm, p: (real(gm, p)[0], None))
+    r = Runner(tmp / "l.db", model); r.start([str(music)]); r.wait()
+    assert r.status()["noModel"] is True
+    con = connect(tmp / "l.db")
+    assert con.execute("SELECT count(*) FROM assignments").fetchone()[0] == 0
+
+    monkeypatch.setattr(runner_mod, "load_genre_model", lambda d: types.SimpleNamespace(ok=True))
+    monkeypatch.setattr(runner_mod, "analyse_track", real)
+    r2 = Runner(tmp / "l.db", model); r2.start([str(music)]); r2.wait()
+    assert r2.status()["total"] == 2 and r2.status()["noModel"] is False
+    assert con.execute("SELECT count(*) FROM embeddings").fetchone()[0] == 2
+    # And a third run has nothing left to do.
+    r3 = Runner(tmp / "l.db", model); r3.start([str(music)]); r3.wait()
+    assert r3.status()["total"] == 0

@@ -295,6 +295,8 @@ input[type="text"]::placeholder { color: var(--ink-3); }
 .sorting.running .sp-dot { background: var(--accent); animation: breathe 1.6s var(--ease) infinite; }
 @keyframes breathe { 0%,100% { opacity: 1; } 50% { opacity: 0.25; } }
 .sp-count { margin-left: auto; font-variant-numeric: tabular-nums; letter-spacing: 0; }
+/* A sentence, not a counter: normal case, in the "look at this" colour. */
+.sp-count.sp-warn { text-transform: none; font-weight: 500; font-size: 11.5px; color: var(--uncertain); }
 
 .sp-name {
   font-size: 16px; font-weight: 600; color: var(--ink);
