@@ -741,6 +741,21 @@ def make_app(con, model_path, runner=None):
                 raise ApiError(str(e))
             return {"next": out}
 
+        def _check_folder_dest(self, dest):
+            """Refuse folder exports that would scatter crate folders over the
+            top of a disk or the home folder, or land inside a music folder
+            Crate scans - the next run would find every copy and add the whole
+            library a second time as duplicates."""
+            home = Path.home().resolve()
+            if dest == Path(dest.anchor) or dest == home:
+                raise ApiError(f"choose a folder of its own, e.g. {home / 'Desktop' / 'Crates'}")
+            for f in get_folders(con):
+                music = Path(f).expanduser().resolve()
+                if dest == music or music in dest.parents:
+                    raise ApiError(f"{dest} is inside your music folder {music}; Crate would "
+                                   "scan the copies as new tracks. Export somewhere else, "
+                                   "e.g. ~/Desktop/Crates.")
+
         def _export(self, payload):
             dest = self._field(payload, "dest", "str", required=True)
             kind = self._field(payload, "kind", "str", default="folders")
@@ -751,6 +766,7 @@ def make_app(con, model_path, runner=None):
             dest = str(Path(dest).expanduser().resolve())
             try:
                 if kind == "folders":
+                    self._check_folder_dest(Path(dest))
                     skipped = []
                     # Takes the lock itself, only for its reads, so the app
                     # keeps answering while the files are copied.

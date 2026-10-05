@@ -606,3 +606,27 @@ def test_folder_export_does_not_hold_the_database_lock_while_copying(tmp_path, m
     monkeypatch.setattr(exporters, "_copy", fake_copy)
     assert exporters.export_folders(con, tmp_path / "out", lock=LOCK) == {"House": 1}
     assert free == [True]
+
+
+def test_folder_export_refuses_disk_root_home_and_music_folders(tmp_path, monkeypatch):
+    # Crate folders scattered over / or ~, or copies landing inside a folder
+    # Crate scans (the next run would add every copy as a new track).
+    import urllib.error
+    from crateapp.bootstrap import add_folder
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    (tmp_path / "home").mkdir()
+    music = tmp_path / "music"; music.mkdir()
+    con = connect(tmp_path / "l.db")
+    add_folder(con, str(music))
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), make_app(con, tmp_path / "m.json"))
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{srv.server_address[1]}"
+    try:
+        for dest in ("/", str(tmp_path / "home"), str(music), str(music / "Crates")):
+            with pytest.raises(urllib.error.HTTPError) as e:
+                post(base + "/api/export", {"kind": "folders", "dest": dest})
+            assert e.value.code == 400, dest
+        ok = post(base + "/api/export", {"kind": "folders", "dest": str(tmp_path / "out")})
+        assert ok["dest"] == str((tmp_path / "out").resolve())
+    finally:
+        srv.shutdown()
