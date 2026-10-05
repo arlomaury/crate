@@ -709,9 +709,10 @@ def grid_start(moments, bpm):
     first downbeat in the track. With no moment the TEMPO element is left
     out and Rekordbox analyses the grid itself.
     """
-    if not bpm or bpm <= 0 or not moments:
+    times = [float(m["time"]) for m in (moments or []) if m.get("time") is not None]
+    if not bpm or bpm <= 0 or not times:
         return None
-    t0 = min(float(m["time"]) for m in moments if m.get("time") is not None)
+    t0 = min(times)
     bar = 4 * 60.0 / float(bpm)
     return round(t0 % bar, 3)
 

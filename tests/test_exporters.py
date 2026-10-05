@@ -286,4 +286,5 @@ def test_no_moments_means_rekordbox_builds_the_grid(tmp_path):
     from analyze import grid_start, tempo_element
     assert grid_start([], 128) is None and tempo_element([], 128) == ""
     assert grid_start([{"time": 3.0}], None) is None
+    assert grid_start([{"label": "drop"}], 128) is None      # no time recorded
     assert grid_start([{"time": 10.3}, {"time": 2.2}], 120) == 0.2   # 2.2 mod 2.0

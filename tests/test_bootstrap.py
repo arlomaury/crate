@@ -130,3 +130,17 @@ def test_named_playlists_are_excluded_from_becoming_crates(tmp_path):
     assert skipped == {"AllSongs": 2}
     names = {r["name"] for r in con.execute("SELECT name FROM crates")}
     assert names == {"afro"}
+
+
+def test_folders_added_at_the_same_time_are_all_kept(tmp_path):
+    # Two requests remembering folders at once must not each write back a
+    # list that lacks the other's folder.
+    import threading
+    con = connect(tmp_path / "l.db")
+    paths = [f"/Volumes/Drive{i}" for i in range(40)]
+    threads = [threading.Thread(target=add_folder, args=(con, p)) for p in paths]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert sorted(get_folders(con)) == sorted(paths)

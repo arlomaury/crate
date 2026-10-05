@@ -66,6 +66,8 @@ def test_security_headers_present(base):
     _, headers = status(base + "/api/state")
     assert headers["X-Content-Type-Options"] == "nosniff"
     assert headers["X-Frame-Options"] == "DENY"
+    csp = headers["Content-Security-Policy"]
+    assert "script-src 'self'" in csp and "object-src 'none'" in csp
 
 
 def test_oversized_body_refused(base):

@@ -32,3 +32,16 @@ def test_truncated_model_reads_as_empty_and_does_not_crash(tmp_path):
     write_model(p, {"crates": {}})
     assert read_model(p) == {"crates": {}}
     assert [f.name for f in tmp_path.iterdir()] == ["m.json"]   # no temp files left
+
+
+def test_both_launchers_use_the_per_user_model():
+    # The desktop .app launcher once still passed the repo's own
+    # crate_model.json, so training from the app overwrote the bundled model.
+    from pathlib import Path
+    root = Path(__file__).resolve().parent.parent
+    for name in ("crate.command", "desktop-app-launcher.sh"):
+        text = (root / name).read_text()
+        assert "user_model_path" in text, name
+        assert "serve(connect(db), 'crate_model.json'" not in text, name
+    launcher = (root / "desktop-app-launcher.sh").read_text()
+    assert launcher.index('mkdir -p "$HOME/.crate"') < launcher.index("nohup")

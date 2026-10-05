@@ -21,11 +21,14 @@ from crateapp.db import LOCK
 
 def add_folder(con, path):
     """Remember a music folder. Stored once; never asked for again."""
-    folders = get_folders(con)
-    p = str(Path(path).expanduser())
-    if p not in folders:
-        folders.append(p)
-        with LOCK:
+    # Read and write under one hold of the (re-entrant) lock: two requests
+    # adding folders at once would otherwise each write back a list missing
+    # the other's folder.
+    with LOCK:
+        folders = get_folders(con)
+        p = str(Path(path).expanduser())
+        if p not in folders:
+            folders.append(p)
             con.execute(
                 "INSERT OR REPLACE INTO config (key, value) VALUES ('folders', ?)",
                 (json.dumps(folders),))
@@ -34,8 +37,8 @@ def add_folder(con, path):
 
 
 def remove_folder(con, path):
-    folders = [f for f in get_folders(con) if f != str(Path(path).expanduser())]
     with LOCK:
+        folders = [f for f in get_folders(con) if f != str(Path(path).expanduser())]
         con.execute("INSERT OR REPLACE INTO config (key, value) VALUES ('folders', ?)",
                     (json.dumps(folders),))
         con.commit()

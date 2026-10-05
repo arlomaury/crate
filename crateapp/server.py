@@ -89,6 +89,11 @@ _CONVERT_GUARD = threading.Lock()
 _CONVERT_LOCKS = {}
 
 
+CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
+       "media-src 'self' blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; "
+       "frame-ancestors 'none'; form-action 'none'")
+
+
 def make_app(con, model_path, runner=None):
     retrainer = _Retrainer(con, model_path)
     class Handler(BaseHTTPRequestHandler):
@@ -106,6 +111,10 @@ def make_app(con, model_path, runner=None):
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("X-Frame-Options", "DENY")
             self.send_header("Referrer-Policy", "no-referrer")
+            # Only this app's own script, styles and media may load or run, so
+            # a track or crate name that slipped past escaping could still not
+            # execute anything.
+            self.send_header("Content-Security-Policy", CSP)
             super().end_headers()
 
         def _send(self, obj, code=200):

@@ -41,14 +41,22 @@ ARCH_PREFIX=()
 if [ "$(sysctl -n hw.optional.arm64 2>/dev/null)" = "1" ]; then
   ARCH_PREFIX=(arch -arm64)
 fi
+# The log goes in ~/.crate, which a brand-new user does not have yet; the
+# redirect is opened before Python runs, so it must exist first.
+mkdir -p "$HOME/.crate"
 nohup "${ARCH_PREFIX[@]}" "$PY_BIN" -c "
 from pathlib import Path
 from crateapp.db import connect
 from crateapp.runner import Runner
 from crateapp.server import serve
-db = Path.home()/'.crate'/'library.db'
-db.parent.mkdir(parents=True, exist_ok=True)
-serve(connect(db), 'crate_model.json', port=$PORT, runner=Runner(db, 'crate_model.json'))
+from crateapp.model_file import user_model_path
+crate_dir = Path.home()/'.crate'
+# Same as crate.command: the model is per user, beside the library, and the
+# repo's crate_model.json is never written to (decided before connect()
+# creates the database - see crateapp/model_file.py).
+model = str(user_model_path(crate_dir, bundled=Path.cwd()/'crate_model.json'))
+db = crate_dir/'library.db'
+serve(connect(db), model, port=$PORT, runner=Runner(db, model))
 " > "$HOME/.crate/server.log" 2>&1 &
 
 # Importing essentia + TensorFlow takes ~20s on a cold start, so a 15s wait
