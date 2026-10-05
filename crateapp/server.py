@@ -334,6 +334,10 @@ def make_app(con, model_path, runner=None):
 
                 if self.path == "/api/scan":
                     folder = str(Path(self._field(payload, "folder", "str", required=True)).expanduser())
+                    if not Path(folder).is_absolute():
+                        # A relative path would be scanned relative to wherever
+                        # the server was started (the app's own folder).
+                        raise ApiError("give the folder's full path, e.g. ~/Music")
                     try:
                         # The lock is taken inside scan, only around the
                         # database work, so the UI keeps answering while a
@@ -341,6 +345,9 @@ def make_app(con, model_path, runner=None):
                         out = scan(con, folder, lock=LOCK)
                     except FileNotFoundError as e:
                         raise ApiError(str(e), code=404)
+                    except OSError as e:
+                        # A name too long, a folder it may not read, ...
+                        raise ApiError(f"could not scan {folder}: {e.strerror or e}")
                     # Remembered here, not only in the open page: a folder
                     # added before a reload must still be in the next run.
                     add_folder(con, folder)
@@ -801,7 +808,8 @@ def make_app(con, model_path, runner=None):
                 # one from the app, so a mistyped path must not be saved for
                 # good. (A saved folder on an unplugged drive is kept - that
                 # is a drive coming back, not a typo.)
-                if Path(f).expanduser().is_dir():
+                p = Path(f).expanduser()
+                if p.is_absolute() and p.is_dir():
                     add_folder(con, f)
             folders = get_folders(con)
             if not folders:

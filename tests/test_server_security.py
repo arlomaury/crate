@@ -83,6 +83,9 @@ def test_non_finite_preview_position_refused(base):
 
 @pytest.mark.parametrize("path,payload", [
     ("/api/scan", {"folder": 5}),
+    ("/api/scan", {"folder": "Music"}),                             # relative: would scan the app's folder
+    ("/api/scan", {"folder": "/" + "e" * 300}),                     # name too long for the disk
+    ("/api/export", {"dest": "/", "kind": "folders"}),              # crate folders over the whole disk
     ("/api/correct", {"track_id": 1, "to_crate": {"a": 1}}),
     ("/api/correct", {"track_id": "1", "to_crate": "House"}),
     ("/api/lock", {"crate": ["x"]}),
