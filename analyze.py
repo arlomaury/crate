@@ -509,14 +509,28 @@ def analyse(path, gm, verbose=True, emb_dir=None):
     if dur < 5:
         res["errors"].append("file shorter than 5s, skipped")
         return res
+    # Silence (a blank export, a placeholder file) has no tempo, key or
+    # structure, but the extractors still return numbers for it: a silent
+    # 20-second file came back as 738 BPM, key 8A, with eight "phrases".
+    # Flag it instead of filing nonsense.
+    if float(np.max(np.abs(audio))) < 1e-3:
+        res["errors"].append("the audio is silent, so there is nothing to analyse")
+        return res
 
     # --- tempo -------------------------------------------------------------
     try:
         bpm, beats, bconf, _, _ = es.RhythmExtractor2013(method="multifeature")(audio)
-        res["bpm"] = round(float(bpm), 2)
+        if not 40 <= float(bpm) <= 250:
+            # No DJ track is outside this; a number out here means no steady
+            # beat was found (a sound effect, a spoken-word clip, some
+            # acapellas). Left blank rather than guessed - and not an error,
+            # so the track is still filed (an acapella still goes to vocals).
+            res["bpm_note"] = f"no steady beat found (detector said {float(bpm):.0f} BPM)"
+            bpm, beats = None, np.array([])
+        res["bpm"] = round(float(bpm), 2) if bpm is not None else None
         # multifeature confidence runs 0-5.32; rescale and be honest about it.
         res["bpm_confidence"] = round(min(1.0, float(bconf) / 3.5), 2)
-        res["bpm_reliable"] = bool(bconf > 1.0)
+        res["bpm_reliable"] = bool(bconf > 1.0) and bpm is not None
         res["beat_count"] = len(beats)
     except Exception as e:
         beats = np.array([])
@@ -764,7 +778,7 @@ def write_rekordbox_xml(tracks, out):
         name = esc(Path(t["file"]).stem)
         L.append(
             f'    <TRACK TrackID="{i}" Name="{name}" Kind="Audio File" '
-            f'Location="{loc}" AverageBpm="{t.get("bpm", 0)}" '
+            f'Location="{loc}" AverageBpm="{t.get("bpm") or 0}" '
             f'Tonality="{esc(t.get("camelot", ""))}" '
             f'Genre="{esc(t.get("category", ""))}" '
             f'TotalTime="{int(t.get("duration_sec", 0))}" '
