@@ -80,10 +80,11 @@ if [ "$OK" -eq 1 ]; then
   echo "Setup complete."
 else
   echo "Setup finished, but some models did not download."
-  echo "Tempo, key, structure and acapella detection will still work."
-  echo "Re-run ./setup.sh to retry the downloads."
+  echo "Tempo, key, cues and acapella detection will still work, but tracks"
+  echo "cannot be sorted into crates until the models are there."
+  echo "Re-run ./setup.sh to retry the downloads, then Start sorting again."
 fi
 echo
-echo "Now run:"
-echo "  source .venv/bin/activate"
-echo "  python analyze.py ~/Desktop/AllSongs -o ~/Desktop/crate_output"
+echo "Now start the app:  ./crate.command   (or double-click crate.command in Finder)"
+echo "Command-line analyser instead:"
+echo "  source .venv/bin/activate && python analyze.py ~/Music -o ~/Desktop/crate_output"

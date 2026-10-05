@@ -318,7 +318,7 @@ are separate rows now.
 - Audible playback of the crossfade preview and the track player — verified up
   to the speaker (segments decode, ramps schedule, AudioContext runs), but the
   automation browser is backgrounded and Chrome defers media there.
-- `setup.sh` has never been executed end to end (syntax-checked only).
+- `setup.sh` model downloads: the script was run end to end on Linux (Oct 2026) - venv, Essentia-TensorFlow, numpy and scikit-learn installed and all tests passed inside it - but the model download could not be reached from that sandbox, so the download step itself is untested.
 - Half-time/double-time BPM disambiguation.
 
 ---
